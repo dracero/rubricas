@@ -1,0 +1,206 @@
+
+================================================================================
+RÚBRICA DE VALIDACIÓN - GUÍA DOCENTE
+================================================================================
+
+Generado: 2026-01-21 16:53
+Solicitud: Genera una rúbrica detallada para evaluar si una GUÍA DOCENTE 
+        cumple con la NORMATIVA DE IGUALDAD DE GÉNERO. 
+        
+        La rúbrica debe evaluar los siguientes aspectos obligatorios:
+        
+        1. LENGUAJE INCLUSIVO:
+           - ¿Se utiliza lenguaje inclusivo y no sexista?
+           - ¿Se evita el masculino genérico?
+           - ¿Se usan términos neutros (estudiantado, profesorado, alumnado)?
+           - ¿Se emplean desdoblamientos cuando es necesario?
+        
+        2. PERSPECTIVA DE GÉNERO EN CONTENIDOS:
+           - ¿Se incluye bibliografía de autoras mujeres (mínimo 30%)?
+           - ¿Se visibilizan las contribuciones de mujeres en el campo?
+           - ¿Se incorporan ejemplos con perspectiva de género?
+           - ¿Se analizan críticamente sesgos de género en contenidos?
+        
+        3. METODOLOGÍA INCLUSIVA:
+           - ¿Se diversifican las metodologías pedagógicas?
+           - ¿Se fomenta la participación equitativa?
+           - ¿Se distribuyen equitativamente roles en trabajos grupales?
+           - ¿Se consideran diferentes estilos de aprendizaje?
+        
+        4. EVALUACIÓN EQUITATIVA:
+           - ¿Los criterios de evaluación son transparentes y objetivos?
+           - ¿Se permite evaluación anónima cuando es posible?
+           - ¿Se diversifican los instrumentos de evaluación?
+           - ¿La retroalimentación está libre de estereotipos de género?
+        
+        Cada criterio debe tener niveles: CUMPLE TOTALMENTE, CUMPLE PARCIALMENTE, NO CUMPLE.
+        Incluir campo de observaciones para cada artículo.
+
+--------------------------------------------------------------------------------
+CRITERIOS DE EVALUACIÓN
+--------------------------------------------------------------------------------
+
+
+1. Criterio Evaluacion Equitativa
+   Tipo: criterio_evaluacion
+   Descripción: Los criterios de evaluación deben ser transparentes y equitativos. No se permitirán sesgos de género en los sistemas de calificación.
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+2. Criterio Metodologia Inclusiva
+   Tipo: criterio_evaluacion
+   Descripción: La metodología docente debe garantizar la igualdad de oportunidades. Se deben considerar diferentes estilos de aprendizaje sin sesgos de género.
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+3. Entidad Normativa Igualdad Genero General
+   Tipo: criterio_evaluacion
+   Descripción: 
+    NORMATIVA DE IGUALDAD DE GÉNERO EN GUÍAS DOCENTES
+
+    ARTÍCULO 1: LENGUAJE INCLUSIVO
+    Las guías docentes deberán utilizar un lenguaje inclusi
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+4. Criterio Lenguaje Inclusivo
+   Tipo: criterio_evaluacion
+   Descripción: Las guías docentes deberán utilizar un lenguaje inclusivo y no sexista. Es obligatorio el uso de formulaciones que incluyan a todas las personas.
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+5. Criterio Inclusion Ejemplos Genero
+   Tipo: criterio_evaluacion
+   Descripción: - Inclusión de ejemplos y casos de estudio con perspectiva de género
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+6. Criterio Uso Desdoblamientos
+   Tipo: criterio_evaluacion
+   Descripción: - Uso de desdoblamientos cuando sea necesario (los y las estudiantes)
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+7. Criterio Uso Terminos Neutros
+   Tipo: criterio_evaluacion
+   Descripción: - Uso de términos genéricos neutros (estudiantado, profesorado, alumnado)
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+8. Criterio Fomento Participacion Equitativa
+   Tipo: criterio_evaluacion
+   Descripción: - Fomento de la participación equitativa en el aula
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+9. Criterio Rubricas Explicitas Objetivas
+   Tipo: criterio_evaluacion
+   Descripción: - Rúbricas de evaluación con criterios explícitos y objetivos
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+10. Criterio Atencion Brechas Genero
+   Tipo: criterio_evaluacion
+   Descripción: - Atención a posibles brechas de género en competencias previas
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+11. Criterio Analisis Critico Sesgos Genero
+   Tipo: criterio_evaluacion
+   Descripción: - Análisis crítico de sesgos de género en contenidos tradicionales
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+12. Criterio Diversificacion Instrumentos Evaluacion
+   Tipo: criterio_evaluacion
+   Descripción: - Diversificación de instrumentos de evaluación
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+13. Criterio Evitar Masculino Generico
+   Tipo: criterio_evaluacion
+   Descripción: - Evitar el masculino genérico como forma de inclusión
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+14. Criterio Diversificacion Metodologias
+   Tipo: criterio_evaluacion
+   Descripción: - Diversificación de metodologías pedagógicas
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+15. Categoría Educacional
+   Tipo: Categoría de Metadatos
+   Descripción: CATEGORÍA 5: EDUCACIONAL
+   
+   □ Cumple    □ No cumple    □ No aplica
+   
+   Observaciones: ___________________________________________________________
+   _________________________________________________________________________
+
+
+================================================================================
+VALIDACIÓN Y FIRMA
+================================================================================
+
+Evaluador: _________________________    Fecha: _____________________________
+
+Firma: _____________________________
+
+================================================================================
