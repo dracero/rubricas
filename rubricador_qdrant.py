@@ -39,6 +39,60 @@ try:
 except ImportError:
     USING_COLAB = False
 
+# LangSmith para observabilidad
+try:
+    from langsmith import traceable
+    from langsmith.run_helpers import get_current_run_tree
+    LANGSMITH_AVAILABLE = True
+except ImportError:
+    LANGSMITH_AVAILABLE = False
+    # Decorador dummy si no está disponible
+    def traceable(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator if not args or callable(args[0]) else decorator
+    print("⚠️ LangSmith SDK no instalado. Ejecuta: pip install langsmith")
+
+
+# ============================================================================
+# CONFIGURACIÓN LANGSMITH
+# ============================================================================
+
+def setup_langsmith():
+    """Configurar LangSmith para trazabilidad completa"""
+    if not LANGSMITH_AVAILABLE:
+        print("⚠️ LangSmith no disponible")
+        return False
+        
+    try:
+        api_key = os.environ.get("LANGCHAIN_API_KEY") or os.environ.get("LANGSMITH_API_KEY")
+        if not api_key and USING_COLAB:
+            try:
+                api_key = userdata.get("LANGSMITH_API_KEY") or userdata.get("LANGCHAIN_API_KEY")
+            except:
+                pass
+        
+        if not api_key:
+            print("⚠️ LangSmith: No API Key found.")
+            return False
+
+        langsmith_config = {
+            "LANGCHAIN_TRACING_V2": "true",
+            "LANGCHAIN_API_KEY": api_key,
+            "LANGCHAIN_ENDPOINT": "https://api.smith.langchain.com",
+            "LANGCHAIN_PROJECT": "rubricador_qdrant_evaluator"
+        }
+
+        for key, value in langsmith_config.items():
+            if value:
+                os.environ[key] = value
+
+        print("✅ LangSmith configurado exitosamente (Proyecto: rubricador_qdrant_evaluator)")
+        return True
+    except Exception as e:
+        print(f"⚠️ Error configurando LangSmith: {e}")
+        return False
+
 # ============================================================================
 # UTILIDADES (Rate Limiter y Retry)
 # ============================================================================
@@ -126,16 +180,27 @@ class AgenteContexto(Agent):
             self._client = None
             print("⚠️ Sin conexión a Qdrant (Solo modo local)")
 
+    @traceable(name="AgenteContexto.obtener_conocimiento", run_type="retriever")
     def obtener_conocimiento(self, rubrica_path: str) -> Dict:
+        """Obtiene conocimiento de la rúbrica y contexto RAG de Qdrant"""
         print(f"📚 [Agente Contexto] Procesando rúbrica: {rubrica_path}")
+        
+        # Metadata para LangSmith
+        qdrant_metadata = {
+            "rubrica_path": rubrica_path,
+            "qdrant_hits_count": 0,
+            "qdrant_similarity_scores": [],
+            "retrieved_context_length": 0
+        }
         
         try:
             with open(rubrica_path, "r", encoding="utf-8") as f:
                 texto_rubrica = f.read()
         except FileNotFoundError:
-            return {"rubrica_original": "", "contexto_qdrant": ""}
+            return {"rubrica_original": "", "contexto_qdrant": "", "_langsmith_metadata": qdrant_metadata}
 
         contexto_normativo = []
+        similarity_scores = []
         
         # RAG con Qdrant: Buscar conceptos clave de la rúbrica en la normativa indexada
         if self._client:
@@ -158,14 +223,27 @@ class AgenteContexto(Agent):
 
                 for hit in hits:
                     payload = hit.payload
-                    contexto_normativo.append(f"- {payload.get('nombre')}: {payload.get('contexto')[:300]}")
+                    score = getattr(hit, 'score', 0.0)
+                    similarity_scores.append(score)
+                    contexto_normativo.append(f"- [{score:.3f}] {payload.get('nombre')}: {payload.get('contexto', '')[:300]}")
+                
+                # Actualizar metadata para LangSmith
+                qdrant_metadata["qdrant_hits_count"] = len(hits)
+                qdrant_metadata["qdrant_similarity_scores"] = similarity_scores
+                qdrant_metadata["avg_similarity_score"] = sum(similarity_scores) / len(similarity_scores) if similarity_scores else 0
                     
             except Exception as e:
                 print(f"⚠️ Error consultando Qdrant: {e}")
 
+        contexto_str = "\n".join(contexto_normativo)
+        qdrant_metadata["retrieved_context_length"] = len(contexto_str)
+        
+        print(f"   📊 Qdrant: {qdrant_metadata['qdrant_hits_count']} hits, avg_score: {qdrant_metadata.get('avg_similarity_score', 0):.3f}")
+
         return {
             "rubrica_original": texto_rubrica,
-            "contexto_qdrant": "\n".join(contexto_normativo)
+            "contexto_qdrant": contexto_str,
+            "_langsmith_metadata": qdrant_metadata
         }
 
 # ============================================================================
@@ -177,14 +255,20 @@ class AgenteDocumento(Agent):
     def __init__(self, config):
         super().__init__(name="AgenteDocumento")
 
+    @traceable(name="AgenteDocumento.extraer_texto_pdf", run_type="parser")
     def extraer_texto_pdf(self, pdf_path: str) -> str:
+        """Extrae texto de un archivo PDF para evaluación"""
         print(f"📄 [Agente Documento] Extrayendo texto de: {pdf_path}")
         try:
             reader = pypdf.PdfReader(pdf_path)
             texto = ""
+            num_pages = len(reader.pages)
             for page in reader.pages:
                 texto += page.extract_text() + "\n"
-            return texto.strip()
+            
+            resultado = texto.strip()
+            print(f"   📊 PDF: {num_pages} páginas, {len(resultado)} caracteres extraídos")
+            return resultado
         except Exception as e:
             print(f"❌ Error leyendo PDF: {e}")
             return ""
@@ -199,8 +283,13 @@ class AgenteAuditor(Agent):
         super().__init__(name="AgenteAuditor")
         self._client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
+    @traceable(name="AgenteAuditor.evaluar_documento", run_type="llm")
     def evaluar_documento(self, conocimiento: Dict, documento_texto: str) -> str:
+        """Evalúa el documento usando la rúbrica y contexto RAG"""
         print("⚖️ [Agente Auditor] Evaluando documento con Gemini...")
+        
+        # Extraer metadata de Qdrant si está disponible
+        qdrant_meta = conocimiento.get('_langsmith_metadata', {})
         
         prompt = f"""
         Eres un AUDITOR ACADÉMICO riguroso.
@@ -211,7 +300,7 @@ class AgenteAuditor(Agent):
         DOCUMENTO A EVALUAR (Fragmento):
         {documento_texto[:15000]}
         
-        CONTEXTO NORMATIVO (Qdrant):
+        CONTEXTO NORMATIVO (Qdrant - {qdrant_meta.get('qdrant_hits_count', 0)} documentos recuperados):
         {conocimiento['contexto_qdrant']}
         
         RÚBRICA DE REFERENCIA:
@@ -225,6 +314,11 @@ class AgenteAuditor(Agent):
         
         INFORME DE EVALUACIÓN:
         """
+        
+        # Estimación de tokens de entrada (aprox 4 chars = 1 token)
+        input_chars = len(prompt)
+        estimated_input_tokens = input_chars // 4
+        print(f"   📊 Prompt: ~{estimated_input_tokens:,} tokens estimados")
 
         def hacer_llamada():
             return self._client.models.generate_content(
@@ -232,12 +326,19 @@ class AgenteAuditor(Agent):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2, 
-                    max_output_tokens=60000 # Permitir salida extensa
+                    max_output_tokens=60000
                 )
             )
 
         resp = llamar_llm_con_retry(hacer_llamada)
-        return resp.text if resp else "Error en la generación."
+        
+        if resp:
+            output_text = resp.text
+            estimated_output_tokens = len(output_text) // 4
+            print(f"   📊 Respuesta: ~{estimated_output_tokens:,} tokens estimados")
+            print(f"   📊 Qdrant context usado: {qdrant_meta.get('retrieved_context_length', 0)} chars, avg_score: {qdrant_meta.get('avg_similarity_score', 0):.3f}")
+            return output_text
+        return "Error en la generación."
 
 # ============================================================================
 # MAIN
@@ -247,6 +348,9 @@ def main():
     print(f"\n{'='*80}")
     print("SISTEMA COLABA - EVALUADOR DE APUNTES (BACKEND QDRANT)")
     print(f"{'='*80}\n")
+    
+    # Configurar LangSmith para observabilidad
+    setup_langsmith()
 
     config = ConfiguracionColaba()
     if not config.GOOGLE_API_KEY:
