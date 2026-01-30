@@ -38,13 +38,27 @@ except ImportError:
     QDRANT_AVAILABLE = False
     print("⚠️ Qdrant Client no instalado. Ejecuta: pip install qdrant-client")
 
-# LangSmith
+# LangSmith con OpenTelemetry (método correcto para ADK)
 try:
-    from langsmith import traceable
+    from langsmith.integrations.otel import configure as configure_langsmith_otel
     LANGSMITH_AVAILABLE = True
 except ImportError:
     LANGSMITH_AVAILABLE = False
-    print("⚠️ LangSmith SDK no instalado. Ejecuta: pip install langsmith")
+    configure_langsmith_otel = None
+    print("⚠️ LangSmith SDK no instalado. Ejecuta: pip install langsmith>=0.4.26")
+
+# Decorador traceable (fallback si no está disponible)
+try:
+    from langsmith import traceable
+    from langsmith.run_helpers import get_current_run_tree
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    
+    def get_current_run_tree():
+        return None
 
 # Para Colab Secrets
 try:
@@ -59,13 +73,13 @@ except ImportError:
 # ============================================================================
 
 def setup_langsmith():
-    """Configurar LangSmith para trazabilidad"""
+    """Configurar LangSmith con OpenTelemetry para ADK"""
     if not LANGSMITH_AVAILABLE:
         return False
         
     try:
         # Intentar obtener API Key
-        api_key = os.environ.get("LANGCHAIN_API_KEY")
+        api_key = os.environ.get("LANGSMITH_API_KEY")
         if not api_key and USING_COLAB:
             try:
                 api_key = userdata.get("LANGSMITH_API_KEY")
@@ -76,18 +90,15 @@ def setup_langsmith():
             print("⚠️ LangSmith: No API Key found.")
             return False
 
-        langsmith_config = {
-            "LANGCHAIN_TRACING_V2": "true",
-            "LANGCHAIN_API_KEY": api_key,
-            "LANGCHAIN_ENDPOINT": "https://api.smith.langchain.com",
-            "LANGCHAIN_PROJECT": "rubricas_qdrant_system"
-        }
-
-        for key, value in langsmith_config.items():
-            if value:
-                os.environ[key] = value
-
-        print("✅ LangSmith configurado exitosamente")
+        # Configurar variables de entorno
+        os.environ["LANGSMITH_API_KEY"] = api_key
+        project_name = "rubricas_qdrant_system"
+        os.environ["LANGSMITH_PROJECT"] = project_name
+        
+        # Configurar OpenTelemetry con LangSmith
+        configure_langsmith_otel(project_name=project_name)
+        
+        print(f"✅ LangSmith configurado con OpenTelemetry (proyecto: {project_name})")
         return True
     except Exception as e:
         print(f"⚠️ Error configurando LangSmith: {e}")
@@ -356,6 +367,89 @@ class LLMCache:
 
 llm_cache = LLMCache()
 
+def limpiar_json_respuesta(texto: str) -> str:
+    """
+    Limpia una respuesta JSON que puede tener errores de formato comunes.
+    Maneja: comas trailing, comillas no escapadas, saltos de línea en strings, etc.
+    """
+    if not texto:
+        return "{}"
+    
+    # Remover bloques de código markdown si existen
+    texto = re.sub(r'^```json\s*', '', texto.strip())
+    texto = re.sub(r'^```\s*', '', texto)
+    texto = re.sub(r'\s*```$', '', texto)
+    
+    # Encontrar el JSON (buscar desde { hasta el último })
+    inicio = texto.find('{')
+    fin = texto.rfind('}')
+    if inicio != -1 and fin != -1 and fin > inicio:
+        texto = texto[inicio:fin + 1]
+    
+    # Remover comas trailing antes de } o ]
+    texto = re.sub(r',\s*}', '}', texto)
+    texto = re.sub(r',\s*]', ']', texto)
+    
+    # Escapar saltos de línea dentro de strings JSON
+    # Reemplazar newlines literales que no están escapados
+    texto = texto.replace('\r\n', '\\n').replace('\r', '\\n')
+    
+    # Reemplazar tabs por espacios
+    texto = texto.replace('\t', ' ')
+    
+    # Remover caracteres de control problemáticos (excepto \n y \t ya procesados)
+    texto = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', texto)
+    
+    return texto
+
+
+def parsear_json_con_fallback(texto: str) -> dict:
+    """
+    Intenta parsear JSON con múltiples estrategias de fallback.
+    """
+    # 1. Intentar parse directo
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        pass
+    
+    # 2. Limpiar y reintentar
+    texto_limpio = limpiar_json_respuesta(texto)
+    try:
+        return json.loads(texto_limpio)
+    except json.JSONDecodeError as e:
+        print(f"   ⚠️ JSON inválido después de limpieza: {e}")
+        print(f"   📝 Fragmento problemático: ...{texto_limpio[max(0, e.pos-50):e.pos+50]}...")
+    
+    # 3. Fallback: extraer entidades y relaciones con regex
+    print("   🔧 Intentando extracción con regex como fallback...")
+    resultado = {"entidades": [], "relaciones": []}
+    
+    # Extraer entidades con regex
+    entidad_pattern = r'"nombre"\s*:\s*"([^"]+)"\s*,\s*"tipo"\s*:\s*"([^"]+)"'
+    for match in re.finditer(entidad_pattern, texto_limpio):
+        resultado["entidades"].append({
+            "nombre": match.group(1),
+            "tipo": match.group(2),
+            "contexto": "",
+            "propiedades": {}
+        })
+    
+    # Extraer relaciones con regex
+    relacion_pattern = r'"origen"\s*:\s*"([^"]+)"\s*,\s*"destino"\s*:\s*"([^"]+)"\s*,\s*"tipo"\s*:\s*"([^"]+)"'
+    for match in re.finditer(relacion_pattern, texto_limpio):
+        resultado["relaciones"].append({
+            "origen": match.group(1),
+            "destino": match.group(2),
+            "tipo": match.group(3),
+            "propiedades": {}
+        })
+    
+    if resultado["entidades"]:
+        print(f"   ✅ Fallback exitoso: {len(resultado['entidades'])} entidades, {len(resultado['relaciones'])} relaciones")
+    
+    return resultado
+
 def llamar_llm_con_retry(func, prompt_for_cache=None, max_intentos=3):
     if prompt_for_cache:
         cached = llm_cache.get(prompt_for_cache)
@@ -454,7 +548,7 @@ class AgentePersistenciaQdrant:
 
     @traceable(name="AgentePersistenciaQdrant.buscar_similares", run_type="retriever")
     def buscar_similares(self, texto_consulta: str, limit: int = 5, score_threshold: float = 0.7) -> List[Dict]:
-        """Busca entidades similares por vector con tracking de métricas"""
+        """Busca entidades similares por vector (trazado via OpenTelemetry)"""
         vector = self.generar_embedding(texto_consulta)
         
         try:
@@ -504,11 +598,11 @@ class AgenteOntologo:
             instruction="Eres un experto en ontologías educativas. Extrae conceptos y relaciones.",
             description="Extrae entidades y relaciones"
         )
-        self.token_limit = 60000
+        self.token_limit = 60000  # Límite amplio para respuestas JSON completas
 
     @traceable(name="AgenteOntologo.procesar_documento", run_type="chain")
     def procesar_documento(self, texto: str) -> Ontologia:
-        """Procesa un documento y extrae una ontología con tracking"""
+        """Procesa un documento y extrae una ontología (trazado via OpenTelemetry)"""
         prompt = self._construir_prompt_extraccion(texto)
         
         # Estimar tokens de entrada
@@ -516,7 +610,10 @@ class AgenteOntologo:
         estimated_input_tokens = input_chars // 4
         print(f"   📊 Prompt ontología: ~{estimated_input_tokens:,} tokens estimados")
         
+        token_usage = {}
+        
         def hacer_llamada():
+            nonlocal token_usage
             response = self.client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=prompt,
@@ -526,14 +623,35 @@ class AgenteOntologo:
                     response_mime_type="application/json"
                 )
             )
+            
+            # Capturar tokens reales de Gemini
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                token_usage = {
+                    "prompt_tokens": getattr(response.usage_metadata, 'prompt_token_count', 0),
+                    "completion_tokens": getattr(response.usage_metadata, 'candidates_token_count', 0),
+                    "total_tokens": getattr(response.usage_metadata, 'total_token_count', 0)
+                }
+            
             return response.text
 
         try:
-            print("�� [Agente Ontólogo] Extrayendo entidades y relaciones...")
+            print("🔬 [Agente Ontólogo] Extrayendo entidades y relaciones...")
             resultado = llamar_llm_con_retry(hacer_llamada)
             
-            # Parsear respuesta
-            data = json.loads(resultado)
+            # Mostrar tokens reales y registrar en LangSmith
+            if token_usage:
+                print(f"   📊 Tokens Gemini: {token_usage.get('prompt_tokens', 0):,} in, {token_usage.get('completion_tokens', 0):,} out")
+                
+                # Registrar en LangSmith si está activo
+                rt = get_current_run_tree()
+                if rt:
+                    rt.add_metadata({
+                        "token_usage": token_usage,
+                        "model": "gemini-2.5-flash"
+                    })
+            
+            # Parsear respuesta JSON con fallback robusto
+            data = parsear_json_con_fallback(resultado)
             
             entidades = []
             relaciones = []
@@ -559,7 +677,7 @@ class AgenteOntologo:
                 ))
             
             print(f"   📊 Ontología extraída: {len(entidades)} entidades, {len(relaciones)} relaciones")
-            return Ontologia(entidades=entidades, relaciones=relaciones, metadata={})
+            return Ontologia(entidades=entidades, relaciones=relaciones, metadata=token_usage)
             
         except Exception as e:
             print(f"⚠️ Error en Agente Ontólogo: {e}")
@@ -570,7 +688,7 @@ class AgenteOntologo:
         Analiza el siguiente texto normativo y extrae una ONTOLOGÍA de conceptos educativos.
         
         TEXTO:
-        {texto[:20000]}  # Limitar contexto si es necesario
+        {texto[:20000]}  # Límite de contexto
         
         INSTRUCCIONES:
         1. Identifica ENTIDADES clave: conceptos, criterios, niveles, requisitos.
@@ -607,12 +725,12 @@ class AgenteRubricador:
             instruction="Experto en evaluación educativa y diseño de rúbricas.",
             description="Genera rúbricas detalladas"
         )
-        # Límite aumentado para documentos extensos
+        # Límite amplio para documentos extensos
         self.max_tokens = 60000 
 
-    @traceable(name="AgenteRubricador.generar_rubrica", run_type="llm")
+    @traceable(name="AgenteRubricador.generar_rubrica", run_type="chain")
     def generar_rubrica(self, prompt_usuario: str, contexto_rag: Dict, nivel: str = "avanzado") -> str:
-        """Genera la rúbrica final adaptada al nivel educativo con tracking"""
+        """Genera la rúbrica final adaptada al nivel educativo con tracking completo"""
         
         # Obtener configuración del nivel
         config_nivel = NIVELES_ESTUDIANTE.get(nivel, NIVELES_ESTUDIANTE["avanzado"])
@@ -672,30 +790,109 @@ class AgenteRubricador:
         estimated_input_tokens = input_chars // 4
         print(f"   📊 Prompt rúbrica: ~{estimated_input_tokens:,} tokens, contexto RAG: {len(contexto_str)} chars")
         
-        def hacer_llamada():
-            response = self.client.models.generate_content(
+        token_usage = {}
+        
+        @traceable(name="Gemini.generar_fragmento", run_type="llm")
+        def _llamar_modelo_trazado(contenido_prompt: str) -> Any:
+            """Llamada individual trazada para LangSmith"""
+            return self.client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=prompt_generacion,
+                contents=contenido_prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.4,
                     max_output_tokens=self.max_tokens,
                 )
             )
+
+        def hacer_llamada_con_continuacion():
+            """Genera la rúbrica con continuación automática si se trunca"""
+            nonlocal token_usage
             
-            # Verificar truncamiento
-            if response.candidates and response.candidates[0].finish_reason != "STOP":
-                print(f"⚠️ Advertencia: Respuesta finalizada por {response.candidates[0].finish_reason}")
+            respuesta_completa = ""
+            contexto_continuacion = prompt_generacion
+            max_continuaciones = 5
+            continuaciones = 0
             
-            return response.text
+            while continuaciones < max_continuaciones:
+                # Usar la función trazada en lugar de llamar directo
+                response = _llamar_modelo_trazado(contexto_continuacion)
+                
+                # Capturar tokens reales de Gemini
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    prev_tokens = token_usage.get('total_tokens', 0)
+                    token_usage = {
+                        "prompt_tokens": token_usage.get('prompt_tokens', 0) + getattr(response.usage_metadata, 'prompt_token_count', 0),
+                        "completion_tokens": token_usage.get('completion_tokens', 0) + getattr(response.usage_metadata, 'candidates_token_count', 0),
+                        "total_tokens": prev_tokens + getattr(response.usage_metadata, 'total_token_count', 0)
+                    }
+                    
+                    # Registrar tokens para ESTA llamada específica en su propio trace
+                    rt = get_current_run_tree()
+                    if rt:
+                        rt.add_metadata({
+                            "token_usage_call": {
+                                "prompt": getattr(response.usage_metadata, 'prompt_token_count', 0),
+                                "completion": getattr(response.usage_metadata, 'candidates_token_count', 0)
+                            }
+                        })
+                
+                texto_parcial = response.text if response.text else ""
+                respuesta_completa += texto_parcial
+                
+                # Verificar si la respuesta está completa
+                finish_reason = None
+                if response.candidates and len(response.candidates) > 0:
+                    finish_reason = response.candidates[0].finish_reason
+                
+                if finish_reason == "STOP" or finish_reason is None:
+                    # Respuesta completa
+                    break
+                elif str(finish_reason) in ["MAX_TOKENS", "2", "FinishReason.MAX_TOKENS"]:
+                    # Respuesta truncada, pedir continuación
+                    continuaciones += 1
+                    print(f"   ⚠️ Respuesta truncada (parte {continuaciones}), solicitando continuación...")
+                    
+                    # Nuevo prompt pidiendo continuar
+                    contexto_continuacion = f"""
+                    Continúa EXACTAMENTE donde quedaste. Esta es la continuación de una rúbrica que estabas generando.
+                    
+                    ÚLTIMO FRAGMENTO GENERADO (para contexto):
+                    ...{texto_parcial[-500:]}
+                    
+                    INSTRUCCIÓN: Continúa desde ese punto. NO repitas lo anterior. Solo continúa la rúbrica.
+                    """
+                else:
+                    print(f"   ⚠️ Respuesta finalizada por: {finish_reason}")
+                    break
+            
+            if continuaciones > 0:
+                print(f"   ✅ Rúbrica completada con {continuaciones} continuación(es)")
+            
+            return respuesta_completa
 
         try:
             print(f"✍️ [Agente Rubricador] Generando rúbrica para nivel: {config_nivel['nombre']}...")
-            resultado = llamar_llm_con_retry(hacer_llamada)
+            resultado = llamar_llm_con_retry(hacer_llamada_con_continuacion)
             
             if resultado:
-                estimated_output_tokens = len(resultado) // 4
-                print(f"   📊 Respuesta rúbrica: ~{estimated_output_tokens:,} tokens")
+                # Mostrar tokens reales y registrar en LangSmith
+                if token_usage:
+                    print(f"   📊 Tokens Gemini: {token_usage.get('prompt_tokens', 0):,} in, {token_usage.get('completion_tokens', 0):,} out")
+                    
+                    # Registrar en LangSmith si está activo
+                    rt = get_current_run_tree()
+                    if rt:
+                        rt.add_metadata({
+                            "token_usage": token_usage,
+                            "model": "gemini-2.5-flash", 
+                            "continuaciones": continuaciones if 'continuaciones' in locals() else 0
+                        })
+                else:
+                    estimated_output_tokens = len(resultado) // 4
+                    print(f"   📊 Respuesta rúbrica: ~{estimated_output_tokens:,} tokens (estimado)")
+                
                 print(f"   📊 Qdrant context: {len(qdrant_scores)} docs, avg_score: {avg_qdrant_score:.3f}")
+                print(f"   📊 Longitud final: {len(resultado):,} caracteres")
             
             return resultado
         except Exception as e:
@@ -740,11 +937,11 @@ class AgenteBusqueda:
 # ============================================================================
 
 class SistemaColabaQdrant:
-    """Orquestador del sistema con Qdrant"""
+    """Orquestador del sistema con Qdrant y LangSmith"""
     
     def __init__(self):
         print("🚀 Iniciando Sistema Colaba (Edición Qdrant)...")
-        setup_langsmith()
+        self.langsmith_enabled = setup_langsmith()
         
         self.config = ConfiguracionColaba()
         self.agente_persistencia = AgentePersistenciaQdrant(self.config)
@@ -752,8 +949,9 @@ class SistemaColabaQdrant:
         self.agente_rubricador = AgenteRubricador(self.config)
         self.agente_busqueda = AgenteBusqueda(self.config, self.agente_persistencia)
 
+    @traceable(name="SistemaColaba.cargar_normativa", run_type="chain")
     def cargar_normativa(self, texto_normativa: str):
-        """Procesa y guarda una normativa"""
+        """Procesa y guarda una normativa (trazado via OpenTelemetry)"""
         ontologia = self.agente_ontologo.procesar_documento(texto_normativa)
         if ontologia.entidades:
             self.agente_persistencia.guardar_ontologia(ontologia)
@@ -761,8 +959,9 @@ class SistemaColabaQdrant:
         else:
             print("⚠️ No se extrajeron entidades.")
 
+    @traceable(name="SistemaColaba.generar_rubrica", run_type="chain")
     def generar_rubrica(self, prompt: str, archivo_salida: str = None, nivel: str = "avanzado") -> str:
-        """Flujo completo de generación con nivel educativo"""
+        """Flujo completo de generación (trazado via OpenTelemetry)"""
         contexto = self.agente_busqueda.procesar_prompt(prompt)
         rubrica = self.agente_rubricador.generar_rubrica(prompt, contexto, nivel)
         

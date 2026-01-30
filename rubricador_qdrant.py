@@ -39,19 +39,27 @@ try:
 except ImportError:
     USING_COLAB = False
 
-# LangSmith para observabilidad
+# LangSmith con OpenTelemetry (método correcto para ADK)
 try:
-    from langsmith import traceable
-    from langsmith.run_helpers import get_current_run_tree
+    from langsmith.integrations.otel import configure as configure_langsmith_otel
     LANGSMITH_AVAILABLE = True
 except ImportError:
     LANGSMITH_AVAILABLE = False
-    # Decorador dummy si no está disponible
+    configure_langsmith_otel = None
+    print("⚠️ LangSmith SDK no instalado. Ejecuta: pip install langsmith>=0.4.26")
+
+# Decorador traceable (fallback si no está disponible)
+try:
+    from langsmith import traceable
+    from langsmith.run_helpers import get_current_run_tree
+except ImportError:
     def traceable(*args, **kwargs):
         def decorator(func):
             return func
-        return decorator if not args or callable(args[0]) else decorator
-    print("⚠️ LangSmith SDK no instalado. Ejecuta: pip install langsmith")
+        return decorator
+    
+    def get_current_run_tree():
+        return None
 
 
 # ============================================================================
@@ -59,16 +67,16 @@ except ImportError:
 # ============================================================================
 
 def setup_langsmith():
-    """Configurar LangSmith para trazabilidad completa"""
+    """Configurar LangSmith con OpenTelemetry para ADK"""
     if not LANGSMITH_AVAILABLE:
-        print("⚠️ LangSmith no disponible")
         return False
         
     try:
-        api_key = os.environ.get("LANGCHAIN_API_KEY") or os.environ.get("LANGSMITH_API_KEY")
+        # Intentar obtener API Key
+        api_key = os.environ.get("LANGSMITH_API_KEY")
         if not api_key and USING_COLAB:
             try:
-                api_key = userdata.get("LANGSMITH_API_KEY") or userdata.get("LANGCHAIN_API_KEY")
+                api_key = userdata.get("LANGSMITH_API_KEY")
             except:
                 pass
         
@@ -76,18 +84,15 @@ def setup_langsmith():
             print("⚠️ LangSmith: No API Key found.")
             return False
 
-        langsmith_config = {
-            "LANGCHAIN_TRACING_V2": "true",
-            "LANGCHAIN_API_KEY": api_key,
-            "LANGCHAIN_ENDPOINT": "https://api.smith.langchain.com",
-            "LANGCHAIN_PROJECT": "rubricador_qdrant_evaluator"
-        }
-
-        for key, value in langsmith_config.items():
-            if value:
-                os.environ[key] = value
-
-        print("✅ LangSmith configurado exitosamente (Proyecto: rubricador_qdrant_evaluator)")
+        # Configurar variables de entorno
+        os.environ["LANGSMITH_API_KEY"] = api_key
+        project_name = "rubricador_qdrant_evaluator"
+        os.environ["LANGSMITH_PROJECT"] = project_name
+        
+        # Configurar OpenTelemetry con LangSmith
+        configure_langsmith_otel(project_name=project_name)
+        
+        print(f"✅ LangSmith configurado con OpenTelemetry (proyecto: {project_name})")
         return True
     except Exception as e:
         print(f"⚠️ Error configurando LangSmith: {e}")
@@ -320,22 +325,45 @@ class AgenteAuditor(Agent):
         estimated_input_tokens = input_chars // 4
         print(f"   📊 Prompt: ~{estimated_input_tokens:,} tokens estimados")
 
-        def hacer_llamada():
+        @traceable(name="Gemini.evaluar", run_type="llm")
+        def _llamar_modelo_auditado(prompt_input):
             return self._client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=prompt,
+                contents=prompt_input,
                 config=types.GenerateContentConfig(
                     temperature=0.2, 
                     max_output_tokens=60000
                 )
             )
 
+        def hacer_llamada():
+            return _llamar_modelo_auditado(prompt)
+
         resp = llamar_llm_con_retry(hacer_llamada)
         
         if resp:
+            # Capturar métricas de tokens
+            token_usage = {}
+            if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
+                token_usage = {
+                    "prompt_tokens": getattr(resp.usage_metadata, 'prompt_token_count', 0),
+                    "completion_tokens": getattr(resp.usage_metadata, 'candidates_token_count', 0),
+                    "total_tokens": getattr(resp.usage_metadata, 'total_token_count', 0)
+                }
+                
             output_text = resp.text
+            
+            # Registrar en LangSmith
+            rt = get_current_run_tree()
+            if rt and token_usage:
+                rt.add_metadata({
+                     "token_usage": token_usage,
+                     "model": "gemini-2.5-flash"
+                })
+                print(f"   📊 Tokens Gemini: {token_usage.get('prompt_tokens', 0):,} in, {token_usage.get('completion_tokens', 0):,} out")
+
             estimated_output_tokens = len(output_text) // 4
-            print(f"   📊 Respuesta: ~{estimated_output_tokens:,} tokens estimados")
+            print(f"   📊 Respuesta: ~{estimated_output_tokens:,} tokens estimados (chars/4)")
             print(f"   📊 Qdrant context usado: {qdrant_meta.get('retrieved_context_length', 0)} chars, avg_score: {qdrant_meta.get('avg_similarity_score', 0):.3f}")
             return output_text
         return "Error en la generación."
