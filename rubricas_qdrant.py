@@ -452,8 +452,9 @@ class AgentePersistenciaQdrant:
                 return False
         return False
 
+    @traceable(name="AgentePersistenciaQdrant.buscar_similares", run_type="retriever")
     def buscar_similares(self, texto_consulta: str, limit: int = 5, score_threshold: float = 0.7) -> List[Dict]:
-        """Busca entidades similares por vector"""
+        """Busca entidades similares por vector con tracking de métricas"""
         vector = self.generar_embedding(texto_consulta)
         
         try:
@@ -469,10 +470,17 @@ class AgentePersistenciaQdrant:
             hits = result.points if hasattr(result, 'points') else result
             
             resultados = []
+            scores = []
             for hit in hits:
                 payload = hit.payload.copy() if hit.payload else {}
-                payload['score'] = hit.score
+                score = hit.score
+                payload['score'] = score
+                scores.append(score)
                 resultados.append(payload)
+            
+            # Log de métricas para observabilidad
+            avg_score = sum(scores) / len(scores) if scores else 0
+            print(f"   📊 Qdrant Search: {len(resultados)} hits, avg_score: {avg_score:.3f}, threshold: {score_threshold}")
                 
             return resultados
         except Exception as e:
@@ -498,9 +506,15 @@ class AgenteOntologo:
         )
         self.token_limit = 60000
 
+    @traceable(name="AgenteOntologo.procesar_documento", run_type="chain")
     def procesar_documento(self, texto: str) -> Ontologia:
-        """Procesa un documento y extrae una ontología"""
+        """Procesa un documento y extrae una ontología con tracking"""
         prompt = self._construir_prompt_extraccion(texto)
+        
+        # Estimar tokens de entrada
+        input_chars = len(prompt)
+        estimated_input_tokens = input_chars // 4
+        print(f"   📊 Prompt ontología: ~{estimated_input_tokens:,} tokens estimados")
         
         def hacer_llamada():
             response = self.client.models.generate_content(
@@ -543,7 +557,8 @@ class AgenteOntologo:
                     propiedades=r.get("propiedades", {}),
                     confianza=r.get("confianza", 1.0)
                 ))
-                
+            
+            print(f"   📊 Ontología extraída: {len(entidades)} entidades, {len(relaciones)} relaciones")
             return Ontologia(entidades=entidades, relaciones=relaciones, metadata={})
             
         except Exception as e:
@@ -595,19 +610,25 @@ class AgenteRubricador:
         # Límite aumentado para documentos extensos
         self.max_tokens = 60000 
 
+    @traceable(name="AgenteRubricador.generar_rubrica", run_type="llm")
     def generar_rubrica(self, prompt_usuario: str, contexto_rag: Dict, nivel: str = "avanzado") -> str:
-        """Genera la rúbrica final adaptada al nivel educativo"""
+        """Genera la rúbrica final adaptada al nivel educativo con tracking"""
         
         # Obtener configuración del nivel
         config_nivel = NIVELES_ESTUDIANTE.get(nivel, NIVELES_ESTUDIANTE["avanzado"])
         
-        # Formatear contexto de Qdrant
+        # Formatear contexto de Qdrant con scores
         contexto_str = ""
+        qdrant_scores = []
         for item in contexto_rag.get("resultados", []):
-            contexto_str += f"- [{item['nombre']}]: {item['contexto']}\n"
+            score = item.get('score', 0)
+            qdrant_scores.append(score)
+            contexto_str += f"- [{score:.3f}] [{item.get('nombre', 'N/A')}]: {item.get('contexto', '')[:300]}\n"
             if 'relaciones_salientes' in item:
                 for rel in item['relaciones_salientes']:
                     contexto_str += f"  -> {rel['tipo']} -> {rel['destino']}\n"
+        
+        avg_qdrant_score = sum(qdrant_scores) / len(qdrant_scores) if qdrant_scores else 0
         
         # Instrucciones adaptadas al nivel
         instrucciones_nivel = f"""
@@ -625,7 +646,7 @@ class AgenteRubricador:
         
         {instrucciones_nivel}
         
-        CONTEXTO NORMATIVO (Base de Conocimiento):
+        CONTEXTO NORMATIVO (Base de Conocimiento - {len(qdrant_scores)} documentos, avg_score: {avg_qdrant_score:.3f}):
         {contexto_str}
         
         TAREA:
@@ -646,6 +667,11 @@ class AgenteRubricador:
         - Respeta el límite de {config_nivel['max_criterios']} criterios principales.
         """
         
+        # Estimar tokens de entrada
+        input_chars = len(prompt_generacion)
+        estimated_input_tokens = input_chars // 4
+        print(f"   📊 Prompt rúbrica: ~{estimated_input_tokens:,} tokens, contexto RAG: {len(contexto_str)} chars")
+        
         def hacer_llamada():
             response = self.client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -664,7 +690,14 @@ class AgenteRubricador:
 
         try:
             print(f"✍️ [Agente Rubricador] Generando rúbrica para nivel: {config_nivel['nombre']}...")
-            return llamar_llm_con_retry(hacer_llamada)
+            resultado = llamar_llm_con_retry(hacer_llamada)
+            
+            if resultado:
+                estimated_output_tokens = len(resultado) // 4
+                print(f"   📊 Respuesta rúbrica: ~{estimated_output_tokens:,} tokens")
+                print(f"   📊 Qdrant context: {len(qdrant_scores)} docs, avg_score: {avg_qdrant_score:.3f}")
+            
+            return resultado
         except Exception as e:
             print(f"⚠️ Error generando rúbrica: {e}")
             return "Error en generación."
@@ -674,22 +707,32 @@ class AgenteRubricador:
 # ============================================================================
 
 class AgenteBusqueda:
-    """Coordina búsquedas en Qdrant"""
+    """Coordina búsquedas en Qdrant con tracking"""
     
     def __init__(self, config: ConfiguracionColaba, persistencia: AgentePersistenciaQdrant):
         self.config = config
         self.persistencia = persistencia
-        
+    
+    @traceable(name="AgenteBusqueda.procesar_prompt", run_type="retriever")
     def procesar_prompt(self, prompt: str) -> Dict:
+        """Procesa prompt y busca contexto en Qdrant con métricas"""
         print(f"🔎 [Agente Búsqueda] Buscando información para: '{prompt[:50]}...'")
         
         # Búsqueda semántica directa
         resultados = self.persistencia.buscar_similares(prompt, limit=15)
         
+        # Extraer scores para métricas
+        scores = [r.get('score', 0) for r in resultados]
+        avg_score = sum(scores) / len(scores) if scores else 0
+        
+        print(f"   📊 Búsqueda completada: {len(resultados)} resultados, avg_score: {avg_score:.3f}")
+        
         return {
             "prompt": prompt,
             "resultados": resultados,
-            "cantidad": len(resultados)
+            "cantidad": len(resultados),
+            "scores": scores,
+            "avg_score": avg_score
         }
 
 # ============================================================================
