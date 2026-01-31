@@ -69,6 +69,30 @@ except ImportError:
 
 
 # ============================================================================
+# UTILS: ENV & SECRETS (Robust Colab Support)
+# ============================================================================
+
+def get_colab_secret(key: str, default: Any = None) -> Any:
+    """
+    Intenta obtener un secreto de:
+    1. os.environ
+    2. google.colab.userdata (si estamos en Colab)
+    3. default
+    """
+    # 1. Variable de entorno
+    val = os.environ.get(key)
+    if val: return val
+    
+    # 2. Google Colab Userdata
+    if USING_COLAB:
+        try:
+            return userdata.get(key)
+        except Exception:
+            pass
+            
+    return default
+
+# ============================================================================
 # CONFIGURACIÓN LANGSMITH
 # ============================================================================
 
@@ -78,27 +102,30 @@ def setup_langsmith():
         return False
         
     try:
-        # Intentar obtener API Key
-        api_key = os.environ.get("LANGSMITH_API_KEY")
-        if not api_key and USING_COLAB:
-            try:
-                api_key = userdata.get("LANGSMITH_API_KEY")
-            except:
-                pass
+        # Obtener configuración usando el helper robusto
+        api_key = get_colab_secret("LANGSMITH_API_KEY")
+        project_name = get_colab_secret("LANGSMITH_PROJECT", "rubricas_qdrant_system")
+        
+        # Diagnósticos
+        print("\n🔍 LangSmith Diagnostics:")
+        print(f"   - API Key found: {'Yes (starts with ' + api_key[:4] + '...)' if api_key else 'No'}")
         
         if not api_key:
             print("⚠️ LangSmith: No API Key found.")
             return False
 
-        # Configurar variables de entorno
+        # Configurar variables críticas
         os.environ["LANGSMITH_API_KEY"] = api_key
-        project_name = "rubricas_qdrant_system"
         os.environ["LANGSMITH_PROJECT"] = project_name
+        os.environ["LANGSMITH_TRACING"] = "true"  # Forzar tracing explícito
         
-        # Configurar OpenTelemetry con LangSmith
+        print(f"   - Project: {project_name}")
+        print(f"   - Tracing Value: {os.environ.get('LANGSMITH_TRACING')}")
+
+        # Configurar OpenTelemetry
         configure_langsmith_otel(project_name=project_name)
         
-        print(f"✅ LangSmith configurado con OpenTelemetry (proyecto: {project_name})")
+        print(f"✅ LangSmith configurado con OpenTelemetry (Proyecto: {project_name})")
         return True
     except Exception as e:
         print(f"⚠️ Error configurando LangSmith: {e}")
@@ -111,31 +138,23 @@ def setup_langsmith():
 
 class ConfiguracionColaba:
     def __init__(self):
-        self.GOOGLE_API_KEY = self._get_secret("GOOGLE_API_KEY")
-        self.QDRANT_URL = self._get_secret("QDRANT_URL")
-        self.QDRANT_API_KEY = self._get_secret("QDRANT_KEY")
+        # Usar el helper robusto para todas las claves
+        self.GOOGLE_API_KEY = get_colab_secret("GOOGLE_API_KEY")
+        self.QDRANT_URL = get_colab_secret("QDRANT_URL")
+        self.QDRANT_API_KEY = get_colab_secret("QDRANT_KEY") or get_colab_secret("QDRANT_API_KEY")
         
         # Modelo de Embeddings
         self.EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
         
         # Validación
         if not self.GOOGLE_API_KEY:
-            raise ValueError("Falta GOOGLE_API_KEY")
+            raise ValueError("❌ Falta GOOGLE_API_KEY. Verifique sus Colab Secrets.")
         if not self.QDRANT_URL:
             print("⚠️ Advertencia: Falta QDRANT_URL, se usará modo memoria si es posible o fallará.")
 
     def _get_secret(self, key: str) -> str:
-        # 1. Intentar variable de entorno
-        val = os.environ.get(key)
-        if val: return val
-        
-        # 2. Si estamos en Colab, intentar userdata
-        if USING_COLAB:
-            try:
-                return userdata.get(key)
-            except:
-                return None
-        return None
+        # Deprecated: kept for compatibility if needed, but methods above use get_colab_secret directly
+        return get_colab_secret(key)
 
 
 # ============================================================================

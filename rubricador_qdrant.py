@@ -66,29 +66,61 @@ except ImportError:
 # CONFIGURACIÓN LANGSMITH
 # ============================================================================
 
+# ============================================================================
+# UTILS: ENV & SECRETS (Robust Colab Support)
+# ============================================================================
+
+def get_colab_secret(key: str, default: Any = None) -> Any:
+    """
+    Intenta obtener un secreto de:
+    1. os.environ
+    2. google.colab.userdata (si estamos en Colab)
+    3. default
+    """
+    # 1. Variable de entorno
+    val = os.environ.get(key)
+    if val: return val
+    
+    # 2. Google Colab Userdata
+    if USING_COLAB:
+        try:
+            return userdata.get(key)
+        except Exception:
+            pass
+            
+    return default
+
+# ============================================================================
+# CONFIGURACIÓN LANGSMITH
+# ============================================================================
+
 def setup_langsmith():
     """Configurar LangSmith con OpenTelemetry para ADK"""
     if not LANGSMITH_AVAILABLE:
         return False
         
     try:
-        # Intentar obtener API Key
-        api_key = os.environ.get("LANGSMITH_API_KEY")
-        if not api_key and USING_COLAB:
-            try:
-                api_key = userdata.get("LANGSMITH_API_KEY")
-            except:
-                pass
+        # Obtener configuración usando el helper robusto
+        api_key = get_colab_secret("LANGSMITH_API_KEY")
+        
+        # Diagnósticos
+        print("\n🔍 LangSmith Diagnostics:")
+        print(f"   - API Key found: {'Yes (starts with ' + api_key[:4] + '...)' if api_key else 'No'}")
         
         if not api_key:
             print("⚠️ LangSmith: No API Key found.")
             return False
 
-        # Configurar variables de entorno
-        os.environ["LANGSMITH_API_KEY"] = api_key
-        project_name = "rubricador_qdrant_evaluator"
-        os.environ["LANGSMITH_PROJECT"] = project_name
+        # Configurar variables críticas
+        project_name = get_colab_secret("LANGSMITH_PROJECT", "rubricador_qdrant_evaluator")
         
+        os.environ["LANGSMITH_API_KEY"] = api_key
+        os.environ["LANGSMITH_PROJECT"] = project_name
+        os.environ["LANGSMITH_TRACING"] = "true"  # Forzar tracing
+        
+        print(f"   - Project: {project_name}")
+        print(f"   - Tracing Value: {os.environ.get('LANGSMITH_TRACING')}")
+
         # Configurar OpenTelemetry con LangSmith
         configure_langsmith_otel(project_name=project_name)
         
@@ -149,18 +181,11 @@ def llamar_llm_con_retry(func, max_intentos: int = 4, backoff_base: int = 10):
 
 class ConfiguracionColaba:
     def __init__(self):
-        # Intentar cargar desde entorno o colab
-        self.GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-        self.QDRANT_URL = os.getenv('QDRANT_URL')
-        self.QDRANT_KEY = os.getenv('QDRANT_KEY')
+        # Usar el helper robusto para todas las claves
+        self.GOOGLE_API_KEY = get_colab_secret("GOOGLE_API_KEY")
+        self.QDRANT_URL = get_colab_secret("QDRANT_URL")
+        self.QDRANT_KEY = get_colab_secret("QDRANT_KEY") or get_colab_secret("QDRANT_API_KEY")
 
-        if USING_COLAB:
-            try:
-                if not self.GOOGLE_API_KEY: self.GOOGLE_API_KEY = userdata.get('GOOGLE_API_KEY')
-                if not self.QDRANT_URL: self.QDRANT_URL = userdata.get('QDRANT_URL')
-                if not self.QDRANT_KEY: self.QDRANT_KEY = userdata.get('QDRANT_KEY')
-            except:
-                pass
 
 # ============================================================================
 # AGENTE 1: CONTEXTO (Qdrant)
