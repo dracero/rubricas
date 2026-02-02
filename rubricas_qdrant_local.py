@@ -47,6 +47,14 @@ except ImportError:
     QDRANT_AVAILABLE = False
     print("⚠️ Qdrant Client no instalado. Ejecuta: uv add qdrant-client")
 
+# PDF Reader
+try:
+    import pypdf
+    PYPDF_AVAILABLE = True
+except ImportError:
+    PYPDF_AVAILABLE = False
+    print("⚠️ pypdf no instalado. Ejecuta: uv add pypdf")
+
 # LangSmith con OpenTelemetry (método correcto para ADK)
 try:
     from langsmith.integrations.otel import configure as configure_langsmith_otel
@@ -280,7 +288,7 @@ def validar_metadatos_lom(metadatos: Dict) -> Tuple[bool, List[str]]:
 
 # ============================================================================
 # ESTRUCTURAS DE DATOS (Mantenidas de rubricas.py)
-# ============================================================================
+# ============================================== ==============================
 
 @dataclass
 class Entidad:
@@ -944,6 +952,259 @@ class AgenteBusqueda:
         }
 
 # ============================================================================
+# FUNCIONES DE EXTRACCIÓN DE PDF
+# ============================================================================
+
+@traceable(name="extraer_texto_pdf", run_type="parser")
+def extraer_texto_pdf(pdf_path: str) -> str:
+    """
+    Extrae texto de un archivo PDF normativo.
+    
+    Args:
+        pdf_path: Ruta al archivo PDF
+        
+    Returns:
+        Texto extraído del PDF
+    """
+    if not PYPDF_AVAILABLE:
+        print("❌ pypdf no está disponible. Ejecuta: uv add pypdf")
+        return ""
+    
+    print(f"📄 Extrayendo texto de: {pdf_path}")
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+        texto = ""
+        num_pages = len(reader.pages)
+        for page in reader.pages:
+            texto += page.extract_text() + "\n"
+        
+        resultado = texto.strip()
+        print(f"   📊 PDF: {num_pages} páginas, {len(resultado):,} caracteres extraídos")
+        return resultado
+    except FileNotFoundError:
+        print(f"❌ Archivo no encontrado: {pdf_path}")
+        return ""
+    except Exception as e:
+        print(f"❌ Error leyendo PDF: {e}")
+        return ""
+
+
+# ============================================================================
+# SKILLS: ANÁLISIS DE ONTOLOGÍAS PARA DOCUMENTOS NORMATIVOS
+# ============================================================================
+
+# Palabras clave para clasificación automática de documentos
+PALABRAS_CLAVE_ONTOLOGIA = {
+    "IEEE_LOM": ["evaluación", "aprendizaje", "competencias", "objetivos", "didáctica", 
+                 "pedagógico", "criterios", "rúbrica", "educativo", "estudiante", "docente"],
+    "Dublin_Core": ["resolución", "expediente", "trámite", "procedimiento", "administrativo",
+                    "documento", "publicación", "autor", "fecha"],
+    "SCORM": ["SCORM", "LMS", "módulo", "interactivo", "tracking", "e-learning", "curso online"],
+    "LRMI": ["licencia abierta", "reutilización", "compartir", "recurso abierto", "OER", "creative commons"]
+}
+
+
+def analizar_documento_normativo(texto: str) -> Dict[str, Any]:
+    """
+    Analiza las características de un documento normativo para determinar
+    la ontología más apropiada.
+    
+    Skill basado en .agent/skills/SKILL.md
+    
+    Args:
+        texto: Texto del documento normativo
+        
+    Returns:
+        Dict con características detectadas
+    """
+    texto_lower = texto.lower()
+    
+    # Detectar tipo de documento
+    tipo_documento = "general"
+    if any(p in texto_lower for p in ["reglamento", "normativa", "ordenanza"]):
+        tipo_documento = "reglamento"
+    elif any(p in texto_lower for p in ["resolución", "decreto"]):
+        tipo_documento = "resolución"
+    elif any(p in texto_lower for p in ["guía", "manual", "instructivo"]):
+        tipo_documento = "guía"
+    
+    # Detectar ámbito
+    ambito = "general"
+    if any(p in texto_lower for p in ["universidad", "académico", "educativo", "estudiante", "docente", "cátedra"]):
+        ambito = "educativo"
+    elif any(p in texto_lower for p in ["administrativo", "trámite", "expediente"]):
+        ambito = "administrativo"
+    
+    # Detectar componentes pedagógicos
+    tiene_componentes_pedagogicos = any(p in texto_lower for p in [
+        "evaluación", "aprendizaje", "competencia", "criterio", "rúbrica",
+        "calificación", "nivel educativo", "objetivos de aprendizaje"
+    ])
+    
+    # Detectar si requiere interoperabilidad
+    requiere_interoperabilidad = any(p in texto_lower for p in [
+        "LMS", "moodle", "canvas", "sistema", "plataforma", "integración"
+    ])
+    
+    # Detectar si es recurso abierto
+    es_recurso_abierto = any(p in texto_lower for p in [
+        "creative commons", "licencia abierta", "dominio público", "OER", "acceso abierto"
+    ])
+    
+    # Detectar si requiere clasificación taxonómica
+    requiere_clasificacion = any(p in texto_lower for p in [
+        "artículo", "capítulo", "sección", "categoría", "clasificación"
+    ])
+    
+    # Contar coincidencias de palabras clave por ontología
+    conteo_palabras = {}
+    for ontologia, palabras in PALABRAS_CLAVE_ONTOLOGIA.items():
+        conteo = sum(1 for p in palabras if p.lower() in texto_lower)
+        conteo_palabras[ontologia] = conteo
+    
+    return {
+        "tipo_documento": tipo_documento,
+        "ambito": ambito,
+        "tiene_componentes_pedagogicos": tiene_componentes_pedagogicos,
+        "requiere_interoperabilidad": requiere_interoperabilidad,
+        "es_recurso_abierto": es_recurso_abierto,
+        "requiere_clasificacion": requiere_clasificacion,
+        "conteo_palabras_clave": conteo_palabras,
+        "longitud_documento": len(texto)
+    }
+
+
+def calcular_ontologia_optima(caracteristicas: Dict[str, Any]) -> Tuple[str, float, Dict[str, float]]:
+    """
+    Calcula la ontología más apropiada basándose en las características del documento.
+    
+    Implementa el algoritmo de puntuación de SKILL.md
+    
+    Args:
+        caracteristicas: Dict con características extraídas del documento
+        
+    Returns:
+        Tuple con (nombre_ontologia, puntuacion, todas_las_puntuaciones)
+    """
+    pesos = {
+        "pedagogico": 0.25,
+        "simplicidad": 0.15,
+        "interoperabilidad": 0.20,
+        "derechos": 0.10,
+        "taxonomia": 0.15,
+        "lms": 0.15
+    }
+    
+    # Puntuaciones base ajustadas según características
+    puntuaciones_base = {
+        "IEEE_LOM": {
+            "pedagogico": 5 if caracteristicas.get("tiene_componentes_pedagogicos") else 2,
+            "simplicidad": 3,
+            "interoperabilidad": 4,
+            "derechos": 4,
+            "taxonomia": 5 if caracteristicas.get("requiere_clasificacion") else 3,
+            "lms": 4
+        },
+        "Dublin_Core": {
+            "pedagogico": 2,
+            "simplicidad": 5,
+            "interoperabilidad": 5,
+            "derechos": 3,
+            "taxonomia": 3,
+            "lms": 2
+        },
+        "SCORM": {
+            "pedagogico": 3,
+            "simplicidad": 2,
+            "interoperabilidad": 4,
+            "derechos": 2,
+            "taxonomia": 2,
+            "lms": 5 if caracteristicas.get("requiere_interoperabilidad") else 3
+        },
+        "LRMI": {
+            "pedagogico": 3,
+            "simplicidad": 4,
+            "interoperabilidad": 4,
+            "derechos": 5 if caracteristicas.get("es_recurso_abierto") else 3,
+            "taxonomia": 3,
+            "lms": 3
+        }
+    }
+    
+    # Calcular puntuación ponderada
+    resultados = {}
+    for ontologia, scores in puntuaciones_base.items():
+        # Bonus por coincidencia de palabras clave
+        bonus = min(caracteristicas.get("conteo_palabras_clave", {}).get(ontologia, 0) * 0.1, 0.5)
+        total = sum(scores[k] * pesos[k] for k in pesos) + bonus
+        resultados[ontologia] = round(total, 2)
+    
+    mejor = max(resultados, key=resultados.get)
+    return mejor, resultados[mejor], resultados
+
+
+@traceable(name="ejecutar_skills_post_carga", run_type="chain")
+def ejecutar_skills_post_carga(texto_documento: str, nombre_documento: str = "Documento") -> Dict[str, Any]:
+    """
+    Ejecuta los skills de análisis de ontología cuando se carga un documento normativo.
+    
+    Este es el punto de entrada principal del sistema de skills.
+    
+    Args:
+        texto_documento: Texto del documento normativo
+        nombre_documento: Nombre descriptivo del documento
+        
+    Returns:
+        Dict con resultados del análisis y recomendación
+    """
+    print(f"\n{'='*60}")
+    print(f"🔍 SKILL: Análisis de Ontología para: {nombre_documento}")
+    print(f"{'='*60}")
+    
+    # Paso 1: Analizar características
+    print("\n📋 Paso 1: Analizando características del documento...")
+    caracteristicas = analizar_documento_normativo(texto_documento)
+    
+    print(f"   • Tipo: {caracteristicas['tipo_documento']}")
+    print(f"   • Ámbito: {caracteristicas['ambito']}")
+    print(f"   • Componentes pedagógicos: {'✅' if caracteristicas['tiene_componentes_pedagogicos'] else '❌'}")
+    print(f"   • Requiere interoperabilidad: {'✅' if caracteristicas['requiere_interoperabilidad'] else '❌'}")
+    print(f"   • Es recurso abierto: {'✅' if caracteristicas['es_recurso_abierto'] else '❌'}")
+    
+    # Paso 2: Calcular puntuaciones
+    print("\n📊 Paso 2: Calculando puntuaciones de ontologías...")
+    mejor_ontologia, puntuacion, todas_puntuaciones = calcular_ontologia_optima(caracteristicas)
+    
+    print("\n   Puntuaciones:")
+    ranking = sorted(todas_puntuaciones.items(), key=lambda x: x[1], reverse=True)
+    medallas = ["🥇", "🥈", "🥉", "  "]
+    for i, (ont, score) in enumerate(ranking):
+        marca = " ✅" if ont == mejor_ontologia else ""
+        print(f"   {medallas[i]} {ont}: {score:.2f}/5.00{marca}")
+    
+    # Paso 3: Generar recomendación
+    print(f"\n✅ RECOMENDACIÓN: {mejor_ontologia} (Puntuación: {puntuacion:.2f}/5.00)")
+    
+    # Justificación
+    justificaciones = {
+        "IEEE_LOM": "Ideal para documentos educativos con metadatos pedagógicos ricos.",
+        "Dublin_Core": "Apropiado para documentos generales con metadatos básicos.",
+        "SCORM": "Mejor para contenido e-learning interactivo empaquetado.",
+        "LRMI": "Óptimo para recursos educativos abiertos con compatibilidad web."
+    }
+    print(f"   📝 {justificaciones.get(mejor_ontologia, 'Ontología seleccionada basada en análisis.')}")
+    
+    return {
+        "documento": nombre_documento,
+        "caracteristicas": caracteristicas,
+        "ontologia_recomendada": mejor_ontologia,
+        "puntuacion": puntuacion,
+        "todas_puntuaciones": todas_puntuaciones,
+        "justificacion": justificaciones.get(mejor_ontologia, "")
+    }
+
+
+# ============================================================================
 # SISTEMA PRINCIPAL
 # ============================================================================
 
@@ -991,232 +1252,125 @@ class SistemaColabaQdrant:
 # FUNCIÓN MAIN PARA EJECUCIÓN
 # ============================================================================
 
+# Documento normativo de fallback (se usa si no se proporciona PDF)
+NORMATIVA_FALLBACK = """
+NORMATIVA DE CALIDAD PARA LA ELABORACIÓN DE APUNTES DE CÁTEDRA
+
+=== REQUISITOS MÍNIMOS PARA APROBACIÓN ===
+Todo apunte debe cumplir con los siguientes requisitos mínimos observables:
+
+1. ESTRUCTURA VISIBLE:
+   - Título del tema claramente identificado
+   - Nombre del autor y fecha de elaboración
+   - Índice o secciones numeradas (para documentos > 3 páginas)
+
+2. EXTENSIÓN MÍNIMA:
+   - Al menos 1 página por unidad temática principal
+   - Mínimo 500 palabras por concepto clave desarrollado
+
+3. FUENTES DOCUMENTADAS:
+   - Mínimo 2 referencias bibliográficas por tema
+   - Formato de citación consistente (APA, IEEE u otro)
+
+ARTÍCULO 1: DESARROLLO DE CONCEPTOS
+- Precisión conceptual: Las definiciones coinciden con las fuentes bibliográficas citadas.
+- Profundidad del desarrollo: Cada concepto incluye definición + explicación + ejemplo.
+
+ARTÍCULO 2: REFERENCIAS BIBLIOGRÁFICAS
+- Citación correcta: Todas las citas siguen un formato estándar consistente.
+- Pertinencia temporal: Al menos 50% de las referencias de los últimos 10 años.
+
+ARTÍCULO 3: RECURSOS Y ENLACES WEB
+- Validez de enlaces: 100% de enlaces activos al momento de la entrega.
+- Fuentes confiables: Al menos 70% de enlaces a fuentes institucionales o académicas.
+
+=== ESCALA DE CALIFICACIÓN ===
+4 - EXCELENTE: Cumple todos los indicadores + aporta elementos adicionales de valor.
+3 - SATISFACTORIO: Cumple todos los requisitos mínimos e indicadores principales.
+2 - EN DESARROLLO: Cumple requisitos mínimos pero falla en 1-2 indicadores.
+1 - INSUFICIENTE: No cumple requisitos mínimos OR falla en 3+ indicadores.
+"""
+
+
 def main():
     """Punto de entrada principal para ejecución local"""
+    
+    print("\n" + "="*60)
+    print("🚀 SISTEMA COLABA QDRANT - Generación de Rúbricas")
+    print("="*60)
     
     # Inicializar sistema
     colaba = SistemaColabaQdrant()
 
     # =========================================================================
-    # METADATOS IEEE LOM PARA LA NORMATIVA (Basado en análisis de ontología)
+    # 1. SOLICITAR DOCUMENTO NORMATIVO (PDF o fallback)
     # =========================================================================
+    print("\n" + "="*60)
+    print("📄 CARGA DE DOCUMENTO NORMATIVO")
+    print("="*60)
+    print("\nIngrese la ruta del archivo PDF con el documento normativo.")
+    print("(Presione Enter sin escribir nada para usar el documento de ejemplo)")
+    print(f"Ejemplo: ./mi_normativa.pdf o /ruta/completa/documento.pdf")
     
-    metadatos_normativa_lom = {
-        "general": {
-            "identifier": {"catalog": "colaba-qdrant", "entry": "norm-apuntes-001"},
-            "title": "Normativa de Calidad para la Elaboración de Apuntes de Cátedra",
-            "language": "es",
-            "description": "Criterios de evaluación para desarrollo de conceptos, referencias bibliográficas y recursos web en apuntes universitarios",
-            "keyword": ["apuntes", "calidad", "evaluación", "bibliografía", "recursos web", "precisión conceptual"],
-            "structure": "hierarchical",
-            "aggregationLevel": "2"
-        },
-        "lifeCycle": {
-            "version": "1.0",
-            "status": "final",
-            "contribute": [{"role": "author", "entity": "Sistema Colaba Qdrant", "date": "2026-01-29"}]
-        },
-        "educational": {
-            "intendedEndUserRole": ["teacher", "author"],
-            "context": ["higher education"],
-            "learningResourceType": ["policy document", "evaluation rubric", "reference"],
-            "typicalAgeRange": "18+",
-            "semanticDensity": "high",
-            "interactivityType": "expositive"
-        },
-        "rights": {
-            "cost": "no",
-            "copyrightAndOtherRestrictions": "yes",
-            "description": "Uso institucional académico"
-        },
-        "relation": [
-            {"kind": "isBasedOn", "resource": {"identifier": "IEEE_LOM_1484.12.1-2020"}}
-        ],
-        "classification": [
-            {
-                "purpose": "educational objective",
-                "taxonPath": {
-                    "source": "Normativa Interna",
-                    "taxon": [
-                        {"id": "art1", "entry": "Desarrollo de Conceptos"},
-                        {"id": "art2", "entry": "Referencias Bibliográficas"},
-                        {"id": "art3", "entry": "Recursos y Enlaces Web"}
-                    ]
-                }
-            }
-        ]
-    }
+    pdf_path = input("\n📁 Ruta del PDF normativo: ").strip()
     
-    # Validar metadatos IEEE LOM
-    es_valido, errores = validar_metadatos_lom(metadatos_normativa_lom)
-    if es_valido:
-        print("✅ Metadatos IEEE LOM válidos")
+    texto_normativa = ""
+    nombre_documento = "Documento"
+    
+    if pdf_path:
+        # Cargar desde PDF
+        if os.path.exists(pdf_path):
+            texto_normativa = extraer_texto_pdf(pdf_path)
+            nombre_documento = os.path.basename(pdf_path)
+            
+            if not texto_normativa:
+                print("⚠️ No se pudo extraer texto del PDF. Usando documento de ejemplo.")
+                texto_normativa = NORMATIVA_FALLBACK
+                nombre_documento = "Normativa de Ejemplo"
+        else:
+            print(f"❌ Archivo no encontrado: {pdf_path}")
+            print("⚠️ Usando documento de ejemplo...")
+            texto_normativa = NORMATIVA_FALLBACK
+            nombre_documento = "Normativa de Ejemplo"
     else:
-        print(f"⚠️ Errores en metadatos: {errores}")
+        print("ℹ️ Usando documento normativo de ejemplo...")
+        texto_normativa = NORMATIVA_FALLBACK
+        nombre_documento = "Normativa de Ejemplo"
 
-    # 1. Definir Normativa de Calidad de Apuntes (con metadatos IEEE LOM)
-    normativa_apuntes = f"""
-    NORMATIVA DE CALIDAD PARA LA ELABORACIÓN DE APUNTES DE CÁTEDRA
+    # =========================================================================
+    # 2. EJECUTAR SKILLS DE ANÁLISIS DE ONTOLOGÍA
+    # =========================================================================
+    resultado_skills = ejecutar_skills_post_carga(texto_normativa, nombre_documento)
     
-    === METADATOS IEEE LOM ===
-    Identificador: {metadatos_normativa_lom['general']['identifier']['entry']}
-    Título: {metadatos_normativa_lom['general']['title']}
-    Idioma: {metadatos_normativa_lom['general']['language']}
-    Estructura: {metadatos_normativa_lom['general']['structure']}
-    Contexto Educativo: {metadatos_normativa_lom['educational']['context']}
-    Tipo de Recurso: {metadatos_normativa_lom['educational']['learningResourceType']}
-    Densidad Semántica: {metadatos_normativa_lom['educational']['semanticDensity']}
-    
-    === REQUISITOS MÍNIMOS PARA APROBACIÓN ===
-    Todo apunte debe cumplir con los siguientes requisitos mínimos observables:
-    
-    1. ESTRUCTURA VISIBLE:
-       - Título del tema claramente identificado
-       - Nombre del autor y fecha de elaboración
-       - Índice o secciones numeradas (para documentos > 3 páginas)
-       - Párrafos diferenciados con separación visual
-    
-    2. EXTENSIÓN MÍNIMA:
-       - Al menos 1 página por unidad temática principal
-       - Mínimo 500 palabras por concepto clave desarrollado
-    
-    3. FUENTES DOCUMENTADAS:
-       - Mínimo 2 referencias bibliográficas por tema
-       - Formato de citación consistente (APA, IEEE u otro)
-       - Distinción clara entre citas textuales y paráfrasis
-    
-    4. CONTENIDO VERIFICABLE:
-       - Sin errores conceptuales en definiciones clave
-       - Terminología técnica usada correctamente
-       - Al menos 1 ejemplo propio por concepto abstracto
-    
-    === CONTENIDO NORMATIVO ===
+    # Usar la ontología recomendada
+    ontologia_recomendada = resultado_skills.get("ontologia_recomendada", "IEEE_LOM")
+    puntuacion_ontologia = resultado_skills.get("puntuacion", 0)
 
-    ARTÍCULO 1: DESARROLLO DE CONCEPTOS
-    Los apuntes deben presentar el contenido disciplinar con rigor académico y claridad expositiva.
+    # =========================================================================
+    # 3. CARGAR NORMATIVA EN QDRANT
+    # =========================================================================
+    print("\n📚 Cargando documento normativo en Qdrant...")
+    print(f"   📋 Ontología utilizada: {ontologia_recomendada}")
+    print(f"   📝 Puntuación: {puntuacion_ontologia:.2f}/5.00")
+    colaba.cargar_normativa(texto_normativa)
     
-    Criterios de evaluación con EVIDENCIAS OBSERVABLES:
+    # Cargar también el estándar de la ontología recomendada
+    estandar_info = f"""
+    Estándar de Ontología: {ontologia_recomendada}
     
-    - Precisión conceptual: 
-      EVIDENCIA: Las definiciones coinciden con las fuentes bibliográficas citadas.
-      INDICADOR: 0 errores conceptuales graves en términos clave.
+    Este documento fue analizado y se determinó que la ontología {ontologia_recomendada}
+    es la más apropiada para estructurar sus metadatos.
     
-    - Profundidad del desarrollo:
-      EVIDENCIA: Cada concepto incluye: definición + explicación + al menos 1 ejemplo.
-      INDICADOR: Mínimo 3 niveles de detalle (qué es, cómo funciona, para qué sirve).
-    
-    - Secuenciación lógica:
-      EVIDENCIA: Uso de conectores lógicos entre párrafos (por lo tanto, en consecuencia, etc.)
-      INDICADOR: El lector puede seguir la argumentación sin saltos abruptos.
-    
-    - Elaboración personal:
-      EVIDENCIA: Presencia de resúmenes, esquemas o diagramas propios del autor.
-      INDICADOR: Al menos 1 elemento visual propio (tabla, diagrama, esquema) por tema.
-      NOTA: "Elaboración personal" se mide por la presencia de síntesis y reformulación, 
-            NO por el rendimiento posterior del estudiante.
-    
-    - Síntesis:
-      EVIDENCIA: Inclusión de resumen o conclusión al final de cada sección.
-      INDICADOR: Resumen de máximo 100 palabras por sección principal.
-
-    ARTÍCULO 2: REFERENCIAS BIBLIOGRÁFICAS
-    Todo material docente debe estar fundamentado en fuentes académicas reconocidas.
-    
-    Criterios de evaluación con EVIDENCIAS OBSERVABLES:
-    
-    - Citación correcta:
-      EVIDENCIA: Todas las citas siguen un formato estándar consistente.
-      INDICADOR: 100% de las citas con formato APA, IEEE o ISO 690.
-    
-    - Pertinencia temporal:
-      EVIDENCIA: Fecha de publicación de las fuentes consultadas.
-      INDICADOR: Al menos 50% de las referencias de los últimos 10 años.
-    
-    - Clasificación de fuentes:
-      EVIDENCIA: Identificación explícita de bibliografía "básica" vs "complementaria".
-      INDICADOR: Sección diferenciada o marcado visual de cada tipo.
-    
-    - Diversidad de fuentes:
-      EVIDENCIA: Tipos de fuentes utilizadas (libros, artículos, recursos web).
-      INDICADOR: Mínimo 2 tipos diferentes de fuentes.
-
-    ARTÍCULO 3: RECURSOS Y ENLACES WEB
-    Los recursos digitales complementarios deben enriquecer el aprendizaje.
-    
-    Criterios de evaluación con EVIDENCIAS OBSERVABLES:
-    
-    - Validez de enlaces:
-      EVIDENCIA: Comprobación de que los enlaces funcionan (HTTP 200).
-      INDICADOR: 100% de enlaces activos al momento de la entrega.
-    
-    - Descripción de recursos:
-      EVIDENCIA: Cada enlace tiene descripción de 1-2 oraciones.
-      INDICADOR: Ningún enlace "suelto" sin contexto explicativo.
-    
-    - Fuentes confiables:
-      EVIDENCIA: Dominio del sitio web (edu, gov, org, instituciones reconocidas).
-      INDICADOR: Al menos 70% de enlaces a fuentes institucionales o académicas.
-    
-    - Integración con contenido:
-      EVIDENCIA: El recurso web está mencionado en el texto principal.
-      INDICADOR: Cada enlace tiene una referencia explícita en el cuerpo del apunte.
-    
-    === ESCALA DE CALIFICACIÓN ===
-    4 - EXCELENTE: Cumple todos los indicadores + aporta elementos adicionales de valor.
-    3 - SATISFACTORIO: Cumple todos los requisitos mínimos e indicadores principales.
-    2 - EN DESARROLLO: Cumple requisitos mínimos pero falla en 1-2 indicadores.
-    1 - INSUFICIENTE: No cumple requisitos mínimos OR falla en 3+ indicadores.
+    Características del documento:
+    - Tipo: {resultado_skills.get('caracteristicas', {}).get('tipo_documento', 'N/A')}
+    - Ámbito: {resultado_skills.get('caracteristicas', {}).get('ambito', 'N/A')}
+    - Componentes pedagógicos: {'Sí' if resultado_skills.get('caracteristicas', {}).get('tiene_componentes_pedagogicos') else 'No'}
     """
+    colaba.cargar_normativa(estandar_info)
 
-    # 2. Definir Estándar IEEE LOM (Estructura completa según IEEE 1484.12.1-2020)
-    estandar_lom = f"""
-    Estándar IEEE LOM (Learning Object Metadata) - IEEE 1484.12.1-2020
-    
-    Este estándar define metadatos para describir recursos educativos (objetos de aprendizaje).
-    
-    CATEGORÍAS DEL ESQUEMA IEEE LOM:
-    
-    1. GENERAL - Información general del recurso
-       - Identificador (catálogo + entrada)
-       - Título, idioma, descripción
-       - Palabras clave
-       - Estructura: {IEEE_LOM_SCHEMA['general']['structure']}
-       - Nivel de agregación: {IEEE_LOM_SCHEMA['general']['aggregationLevel']}
-    
-    2. CICLO DE VIDA (LifeCycle)
-       - Versión y estado
-       - Estados válidos: {IEEE_LOM_SCHEMA['lifeCycle']['status']}
-       - Contribuyentes (rol, entidad, fecha)
-    
-    3. EDUCATIVA (Educational) - Características pedagógicas
-       - Roles de usuario: {list(IEEE_LOM_ROLES.keys())}
-       - Contextos: {list(IEEE_LOM_CONTEXTS.keys())}
-       - Tipos de recurso: {IEEE_LOM_RESOURCE_TYPES[:5]}...
-       - Tipo de interactividad: {IEEE_LOM_SCHEMA['educational']['interactivityType']}
-       - Densidad semántica: {IEEE_LOM_SEMANTIC_DENSITY}
-       - Dificultad: {IEEE_LOM_SCHEMA['educational']['difficulty']}
-    
-    4. DERECHOS (Rights)
-       - Costo: sí/no
-       - Restricciones de copyright
-       - Descripción de licencia
-    
-    5. RELACIÓN (Relation)
-       - Tipos: isBasedOn, requires, references, isPartOf
-       - Permite vincular recursos educativos relacionados
-    
-    6. CLASIFICACIÓN (Classification)
-       - Propósito: disciplina, prerequisito, objetivo educativo
-       - TaxonPath: sistema de clasificación jerárquico
-    """
-
-    print("\n📚 Cargando documentos normativos en Qdrant...")
-    print(f"   📋 Ontología utilizada: IEEE LOM (IEEE 1484.12.1-2020)")
-    print(f"   📝 Puntuación ontología: 4.25/5.00 (Ver SKILL.md para análisis completo)")
-    colaba.cargar_normativa(normativa_apuntes)
-    colaba.cargar_normativa(estandar_lom)
-
-    # 3. Seleccionar nivel educativo (INTERACTIVO)
+    # =========================================================================
+    # 4. SELECCIONAR NIVEL EDUCATIVO (INTERACTIVO)
+    # =========================================================================
     print("\n" + "="*60)
     print("📊 SELECCIÓN DE NIVEL EDUCATIVO")
     print("="*60)
@@ -1236,27 +1390,43 @@ def main():
         nivel_seleccionado = "avanzado"
     
     print(f"\n✅ Nivel seleccionado: {NIVELES_ESTUDIANTE[nivel_seleccionado]['nombre']}")
+
+    # =========================================================================
+    # 5. GENERAR RÚBRICA
+    # =========================================================================
+    print("\n📋 Generando rúbrica de evaluación...")
     
-    # 4. Generar Rúbrica
-    print("\n📋 Generando rúbrica de evaluación de APUNTES DE CÁTEDRA...")
-    prompt_usuario = """
-    Genera una rúbrica detallada para evaluar la CALIDAD DE APUNTES DE CÁTEDRA.
-    Básate en la 'NORMATIVA DE CALIDAD PARA LA ELABORACIÓN DE APUNTES' y usa la estructura de metadatos de 'IEEE LOM' donde aplique.
+    # Construir prompt basado en el documento cargado
+    prompt_usuario = f"""
+    Genera una rúbrica detallada para evaluar documentos según la normativa cargada: "{nombre_documento}".
     
-    Asegúrate de incluir criterios específicos para:
-    1. Desarrollo de Conceptos (Precisión, Profundidad)
-    2. Bibliografía (Citación, Pertinencia)
-    3. Links y Recursos Web (Validez, Calidad)
+    Usa la ontología {ontologia_recomendada} para estructurar los metadatos.
+    
+    Asegúrate de incluir:
+    1. Criterios específicos basados en el contenido del documento normativo
+    2. Evidencias observables para cada criterio
+    3. Indicadores cuantificables
+    4. Escala de calificación clara
     """
+    
+    # Definir nombre de archivo de salida
+    nombre_salida = f"rubrica_{nombre_documento.replace('.pdf', '').replace(' ', '_')}.txt"
     
     rubrica = colaba.generar_rubrica(
         prompt=prompt_usuario,
-        archivo_salida="rubrica_calidad_apuntes_qdrant.txt",
+        archivo_salida=nombre_salida,
         nivel=nivel_seleccionado
     )
     
-    print("\n✅ Proceso finalizado.")
+    print("\n" + "="*60)
+    print("✅ PROCESO FINALIZADO")
+    print("="*60)
+    print(f"\n📄 Documento normativo: {nombre_documento}")
+    print(f"🔍 Ontología aplicada: {ontologia_recomendada} ({puntuacion_ontologia:.2f}/5.00)")
+    print(f"📊 Nivel educativo: {NIVELES_ESTUDIANTE[nivel_seleccionado]['nombre']}")
+    print(f"💾 Rúbrica guardada en: {nombre_salida}")
 
 
 if __name__ == "__main__":
     main()
+
