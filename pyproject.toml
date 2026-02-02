@@ -1,0 +1,14 @@
+[project]
+name = "rubricas-qdrant"
+version = "0.1.0"
+description = "Sistema de generación de rúbricas con Qdrant Vector Search y LangSmith"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai>=1.0.0",
+    "google-adk>=0.1.0",
+    "sentence-transformers>=2.2.0",
+    "qdrant-client>=1.7.0",
+    "langsmith>=0.4.26",
+    "python-dotenv>=1.0.0",
+    "pypdf>=4.0.0",
+]
