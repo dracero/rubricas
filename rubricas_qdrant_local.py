@@ -146,6 +146,7 @@ class ConfiguracionColaba:
         self.GOOGLE_API_KEY = get_env_var("GOOGLE_API_KEY")
         self.QDRANT_URL = get_env_var("QDRANT_URL")
         self.QDRANT_API_KEY = get_env_var("QDRANT_API_KEY") or get_env_var("QDRANT_KEY")
+        self.QDRANT_KEY = self.QDRANT_API_KEY # Alias for backward compatibility
         
         # Modelo de Embeddings
         self.EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
@@ -746,6 +747,16 @@ class AgenteRubricador:
         )
         # Límite amplio para documentos extensos
         self.max_tokens = 60000 
+        
+    def get_agent_card(self) -> Dict[str, Any]:
+        """Devuelve la tarjeta de capacidades del agente para el Orquestador"""
+        return {
+            "id": "generator",
+            "name": "Generador de Rúbricas",
+            "description": "Crea rúbricas de evaluación a partir de documentos normativos (PDF) y especificaciones del usuario.",
+            "capabilities": ["crear rúbrica", "diseñar evaluación", "procesar normativa"],
+            "type": "specialist"
+        }
 
     @traceable(name="AgenteRubricador.generar_rubrica", run_type="chain")
     def generar_rubrica(self, prompt_usuario: str, contexto_rag: Dict, nivel: str = "avanzado") -> str:

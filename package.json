@@ -1,0 +1,13 @@
+{
+  "name": "rubricas-app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "concurrently \"npm:backend\" \"npm:frontend\"",
+    "backend": "uv run uvicorn server:app --reload --port 8000",
+    "frontend": "cd frontend && npm run dev",
+    "install:all": "npm install && cd frontend && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

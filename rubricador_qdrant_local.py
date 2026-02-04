@@ -383,8 +383,19 @@ class AgenteAuditor(Agent):
             estimated_output_tokens = len(output_text) // 4
             print(f"   📊 Respuesta: ~{estimated_output_tokens:,} tokens estimados (chars/4)")
             print(f"   📊 Qdrant context usado: {qdrant_meta.get('retrieved_context_length', 0)} chars, avg_score: {qdrant_meta.get('avg_similarity_score', 0):.3f}")
+            print(f"   📊 Qdrant context usado: {qdrant_meta.get('retrieved_context_length', 0)} chars, avg_score: {qdrant_meta.get('avg_similarity_score', 0):.3f}")
             return output_text
         return "Error en la generación."
+
+    def get_agent_card(self) -> Dict[str, Any]:
+        """Devuelve la tarjeta de capacidades del agente para el Orquestador"""
+        return {
+            "id": "evaluator",
+            "name": "Evaluador de Apuntes",
+            "description": "Evalúa documentos académicos o apuntes contra una rúbrica específica y genera un informe de auditoría.",
+            "capabilities": ["evaluar documento", "corregir apuntes", "auditar texto", "usar rúbrica"],
+            "type": "specialist"
+        }
 
 # ============================================================================
 # MAIN
