@@ -499,7 +499,14 @@ class AgentePersistenciaQdrant:
             url=config.QDRANT_URL,
             api_key=config.QDRANT_API_KEY
         )
-        self.embedding_model = SentenceTransformer(config.EMBEDDING_MODEL_NAME)
+        # Configurar dispositivo (CPU/CUDA) con fallback seguro
+        device = os.environ.get("EMBEDDING_DEVICE", "cpu")
+        try:
+            self.embedding_model = SentenceTransformer(config.EMBEDDING_MODEL_NAME, device=device)
+            print(f"✅ Modelo de embeddings cargado en: {device}")
+        except Exception as e:
+            print(f"⚠️ Error cargando en {device}, reintentando en CPU: {e}")
+            self.embedding_model = SentenceTransformer(config.EMBEDDING_MODEL_NAME, device="cpu")
         self.collection_name = "rubricas_entidades"
         
         self._inicializar_coleccion()

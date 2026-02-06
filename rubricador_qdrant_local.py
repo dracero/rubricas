@@ -190,7 +190,12 @@ class AgenteContexto(Agent):
     def __init__(self, config):
         super().__init__(name="AgenteContexto")
         self._config = config
-        self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        device = os.environ.get("EMBEDDING_DEVICE", "cpu")
+        try:
+            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+        except Exception:
+            print("⚠️ Fallback a CPU para embeddings")
+            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2', device="cpu")
         self._collection_name = "rubricas_entidades"
         
         # Inicializar Qdrant

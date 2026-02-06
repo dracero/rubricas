@@ -5,6 +5,7 @@ import logging
 import json
 from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
+import a2a_protocol  # Import A2A Protocol definitions
 
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
@@ -47,6 +48,7 @@ orchestrator_agent = None
 eval_contexto = None
 eval_documento = None
 eval_auditor = None
+sys_instances = {}  # Registry of instantiated agents
 
 class AgentOrchestrator:
     def __init__(self, config):
@@ -66,7 +68,7 @@ class AgentOrchestrator:
             logger.warning(f"⚠️ Agente {agent_instance} no tiene 'get_agent_card()'")
 
     def decide_route(self, user_message: str) -> Dict[str, Any]:
-        """Decides which agent should handle the request"""
+        """Decides which agent should handle the request and returns an actionable response"""
         print(f"🧠 [Orchestrator] Analyzing: {user_message}")
         
         # Dynamic Prompt based on Registry
@@ -86,7 +88,8 @@ class AgentOrchestrator:
         {{
             "target_agent": "ID_DEL_AGENTE" | "unknown",
             "confidence": 0.0-1.0,
-            "reasoning": "Breve explicación"
+            "reasoning": "Breve explicación",
+            "suggested_response": "Mensaje para el usuario explicando qué se hará"
         }}
         """
         
@@ -96,10 +99,80 @@ class AgentOrchestrator:
                 contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
-            return json.loads(response.text)
+            data = json.loads(response.text)
+            
+            target = data.get("target_agent", "unknown")
+            message = data.get("suggested_response", "")
+
+            # A2A Protocol Response construction
+            response_payload = {
+                "source": "orchestrator",
+                "target": "user",
+                "content": message,
+                "type": "text",
+                "metadata": {
+                    "confidence": data.get("confidence", 0),
+                    "reasoning": data.get("reasoning", "")
+                }
+            }
+
+            if target == "generator":
+                response_payload["type"] = "action_request"
+                response_payload["metadata"]["action"] = "show_component"
+                response_payload["metadata"]["component"] = "RubricGenerator"
+                if not message:
+                    response_payload["content"] = "Entendido. Para generar una rúbrica, necesito que subas el documento normativo."
+            
+            elif target == "evaluator":
+                response_payload["type"] = "action_request"
+                response_payload["metadata"]["action"] = "show_component"
+                response_payload["metadata"]["component"] = "RubricEvaluator"
+                if not message:
+                    response_payload["content"] = "Bien. Para evaluar unos apuntes, necesito la rúbrica y el documento del estudiante."
+            
+            elif target in self.agents_registry:
+                # Generic Agent Handler (e.g., Greeter)
+                # If we have a direct instance access, we could invoke it here.
+                # However, for A2A modularity, we might want to return a specific type.
+                # Since we don't have global access to instances inside this method easily without refactoring,
+                # let's assume specific "social" agents return text directly OR we invoke them if possible.
+                
+                # REFACTOR: Accessing the instance to run the logic
+                # For this demo, we will check if it's the greeter and run it.
+                # In a full system, this would be a dynamic dispatch lookup.
+                pass 
+                # NOTE: The execution logic should ideally be here if we want the backend to do the work.
+                # Let's modify the return to signal the frontend or handle it.
+                
+                # Dynamic Dispatch Hack for Demo:
+                # We need to find the instance. In a real system, orchestrator has a map of {id: instance}
+                # For now, we update the response type to 'text' and let the frontend show the message,
+                # BUT the user wants the AGENT to generate the message, not the orchestrator's "suggested_response".
+                
+                # Getting global system instances to find the agent
+                sys = get_system()
+                if target == "greeter" and "greeter" in sys_instances:
+                    agent_instance = sys_instances["greeter"]
+                    # Invoke the agent!
+                    agent_response = agent_instance.process_request(user_message)
+                    response_payload["content"] = agent_response
+                else:
+                    # Fallback to orchestrator's suggestion
+                    response_payload["content"] = message
+            
+            else:
+                response_payload["content"] = message or "No estoy seguro de a qué agente asignar tu solicitud."
+
+            return response_payload
+
         except Exception as e:
             logger.error(f"Orchestrator error: {e}")
-            return {"target_agent": "unknown", "confidence": 0, "reasoning": "Error in classification"}
+            return {
+                "source": "orchestrator", 
+                "target": "user", 
+                "type": "error", 
+                "content": "Error interno en el orquestador."
+            }
 
 def get_system():
     global config, qdrant_agent, ontologo, rubricador
@@ -127,8 +200,16 @@ def get_system():
             
             # Register Evaluator
             orchestrator_agent.register_agent(eval_auditor)
+
+            # Register LangChain Greeter
+            from langchain_agent import GreetingAgent
+            greeter = GreetingAgent(config.GOOGLE_API_KEY)
+            orchestrator_agent.register_agent(greeter)
             
-            logger.info("✅ System initialized successfully (Generator + Evaluator + Orchestrator)")
+            # Store in system dict for direct access if needed
+            sys_instances["greeter"] = greeter
+            
+            logger.info("✅ System initialized successfully (Generator + Evaluator + Greeter + Orchestrator)")
         except Exception as e:
             logger.error(f"❌ Initialization error: {e}")
             raise RuntimeError("Failed to initialize system")
