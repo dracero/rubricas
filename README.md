@@ -9,7 +9,7 @@ El sistema consta de tres componentes principales:
 1.  **Frontend (A2UI)**: Una aplicación React/Vite que actúa como cliente del protocolo A2A. No tiene lógica de negocio dura; renderiza la interfaz basándose en las solicitudes de acción (`ACTION_REQUEST`) del orquestador.
 2.  **Backend (A2A)**: Un servidor FastAPI que aloja varios agentes inteligentes:
     *   **Orquestador (`server.py`)**: Recibe mensajes del usuario, decide qué agente debe atenderlos y envía instrucciones al frontend.
-    *   **Generador (`rubricas_qdrant_local.py`)**: Crea rúbricas académicas procesando documentos normativos.
+    *   **Generador (`rubricas_core.py`)**: Crea rúbricas académicas procesando documentos normativos.
     *   **Evaluador (`rubricador_qdrant_local.py`)**: Audita apuntes o trabajos contra una rúbrica.
     *   **Base de Datos Vectorial**: Qdrant (para RAG y contexto).
     *   **LLM**: Google Gemini 2.5 Flash.
@@ -91,6 +91,6 @@ npm run dev
 
 *   `server.py`: Punto de entrada del API y lógica del Orquestador.
 *   `a2a_protocol.py`: Definiciones de tipos de mensajes (Text, ActionRequest).
-*   `rubricas_qdrant_local.py`: Lógica del agente Generador.
+*   `rubricas_core.py`: Lógica del agente Generador.
 *   `rubricador_qdrant_local.py`: Lógica del agente Evaluador.
 *   `frontend/src/components/ChatInterface.jsx`: Cliente del protocolo A2A.

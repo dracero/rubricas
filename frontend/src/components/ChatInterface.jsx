@@ -42,7 +42,7 @@ const ChatInterface = () => {
         setLoading(true);
 
         try {
-            const res = await fetch('http://localhost:8000/api/chat', {
+            const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: userMsg.content })
@@ -106,7 +106,7 @@ const ChatInterface = () => {
                         >
                             <div className={clsx(
                                 "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
-                                msg.source === 'user' ? "bg-blue-600" : "bg-teal-600"
+                                msg.source === 'user' ? "bg-blue-600" : "bg-blue-500"
                             )}>
                                 {msg.source === 'user' ? (
                                     <User className="w-5 h-5 text-white" />
@@ -136,7 +136,7 @@ const ChatInterface = () => {
                         animate={{ opacity: 1 }}
                         className="flex gap-3 mr-auto"
                     >
-                        <div className="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center">
+                        <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
                             <Bot className="w-5 h-5 text-white" />
                         </div>
                         <div className="bg-gray-100 p-4 rounded-2xl rounded-tl-none border border-gray-200 flex items-center gap-2">

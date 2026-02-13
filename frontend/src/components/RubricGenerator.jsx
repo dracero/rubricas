@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, FileText, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle, AlertCircle, Download } from 'lucide-react';
 
 const RubricGenerator = ({ onComplete }) => {
     const [file, setFile] = useState(null);
@@ -24,7 +24,7 @@ const RubricGenerator = ({ onComplete }) => {
             const formData = new FormData();
             formData.append('file', file);
 
-            const uploadRes = await fetch('http://localhost:8000/api/upload', {
+            const uploadRes = await fetch('/api/upload', {
                 method: 'POST',
                 body: formData,
             });
@@ -34,7 +34,7 @@ const RubricGenerator = ({ onComplete }) => {
 
             // 2. Generate
             setStatus('generating');
-            const genRes = await fetch('http://localhost:8000/api/generate', {
+            const genRes = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -66,19 +66,28 @@ const RubricGenerator = ({ onComplete }) => {
             </h3>
 
             {status === 'success' ? (
-                <div className="text-center p-4">
-                    <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
-                    <p className="text-green-700 font-medium">¡Rúbrica Generada!</p>
-                    <a
-                        href={`http://localhost:8000${result.download_url}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
-                    >
-                        Descargar Rúbrica
-                    </a>
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2 text-green-700">
+                        <CheckCircle className="w-5 h-5" />
+                        <span className="font-medium">¡Rúbrica Generada!</span>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
+                            {result?.result || result?.content || 'Sin contenido'}
+                        </pre>
+                    </div>
+                    {result?.download_url && (
+                        <a
+                            href={result.download_url}
+                            download
+                            className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+                        >
+                            <Download className="w-4 h-4" />
+                            Descargar Rúbrica
+                        </a>
+                    )}
                     <button
-                        onClick={() => setStatus('idle')}
+                        onClick={() => { setStatus('idle'); setResult(null); setFile(null); }}
                         className="block w-full mt-2 text-sm text-gray-500 hover:text-gray-700"
                     >
                         Generar otra
@@ -110,7 +119,7 @@ const RubricGenerator = ({ onComplete }) => {
                             onChange={(e) => setLevel(e.target.value)}
                             className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         >
-                            <option value="primer_año">Primer Año</option>
+                            <option value="inicial">Inicial (Primer Año)</option>
                             <option value="avanzado">Avanzado (3°-5° año)</option>
                             <option value="posgrado">Posgrado</option>
                         </select>
@@ -131,7 +140,7 @@ const RubricGenerator = ({ onComplete }) => {
                         {(status === 'uploading' || status === 'generating') ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
-                                Procesando...
+                                {status === 'uploading' ? 'Subiendo documento...' : 'Generando rúbrica (puede tardar)...'}
                             </>
                         ) : 'Generar Rúbrica'}
                     </button>

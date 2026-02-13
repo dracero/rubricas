@@ -2,8 +2,11 @@
   "name": "rubricas-app",
   "version": "1.0.0",
   "scripts": {
-    "dev": "concurrently \"npm:backend\" \"npm:frontend\"",
-    "backend": "uv run uvicorn server:app --reload --port 8000",
+    "dev": "concurrently \"npm:agent:*\" \"npm:orchestrator\" \"npm:frontend\"",
+    "agent:generator": "cd agents/generator && uv run python -m app --port 10001",
+    "agent:evaluator": "cd agents/evaluator && uv run python -m app --port 10002",
+    "agent:greeter": "cd agents/greeter && uv run python -m app --port 10003",
+    "orchestrator": "sleep 5 && uv run python -m hosts.orchestrator",
     "frontend": "cd frontend && npm run dev",
     "install:all": "npm install && cd frontend && npm install"
   },

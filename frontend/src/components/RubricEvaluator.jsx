@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, FileSearch, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, FileSearch, Loader2, CheckCircle, AlertCircle, Download } from 'lucide-react';
 
 const RubricEvaluator = ({ onComplete }) => {
     const [rubricFile, setRubricFile] = useState(null);
@@ -19,7 +19,7 @@ const RubricEvaluator = ({ onComplete }) => {
             // 1. Upload Rubric
             const formRubric = new FormData();
             formRubric.append('file', rubricFile);
-            const rubRes = await fetch('http://localhost:8000/api/evaluate/upload_rubric', {
+            const rubRes = await fetch('/api/evaluate/upload_rubric', {
                 method: 'POST',
                 body: formRubric
             });
@@ -29,7 +29,7 @@ const RubricEvaluator = ({ onComplete }) => {
             // 2. Upload Doc
             const formDoc = new FormData();
             formDoc.append('file', docFile);
-            const docRes = await fetch('http://localhost:8000/api/evaluate/upload_doc', {
+            const docRes = await fetch('/api/evaluate/upload_doc', {
                 method: 'POST',
                 body: formDoc
             });
@@ -37,7 +37,7 @@ const RubricEvaluator = ({ onComplete }) => {
             const docData = await docRes.json();
 
             // 3. Evaluate
-            const evalRes = await fetch('http://localhost:8000/api/evaluate/run', {
+            const evalRes = await fetch('/api/evaluate/run', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -64,23 +64,32 @@ const RubricEvaluator = ({ onComplete }) => {
         <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200 mt-4 max-w-2xl">
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <FileSearch className="w-5 h-5 text-purple-600" />
-                Evaluador de Apuntes
+                Evaluador de Documentos
             </h3>
 
             {status === 'success' ? (
-                <div className="text-center p-4">
-                    <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
-                    <p className="text-green-700 font-medium">¡Evaluación Completada!</p>
-                    <a
-                        href={`http://localhost:8000${result.download_url}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block mt-4 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition"
-                    >
-                        Descargar Informe
-                    </a>
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2 text-green-700">
+                        <CheckCircle className="w-5 h-5" />
+                        <span className="font-medium">¡Evaluación Completada!</span>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
+                            {result?.result || result?.content || 'Sin contenido'}
+                        </pre>
+                    </div>
+                    {result?.download_url && (
+                        <a
+                            href={result.download_url}
+                            download
+                            className="inline-flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition"
+                        >
+                            <Download className="w-4 h-4" />
+                            Descargar Informe
+                        </a>
+                    )}
                     <button
-                        onClick={() => setStatus('idle')}
+                        onClick={() => { setStatus('idle'); setResult(null); setRubricFile(null); setDocFile(null); }}
                         className="block w-full mt-2 text-sm text-gray-500 hover:text-gray-700"
                     >
                         Evaluar otro
@@ -107,7 +116,7 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Student Doc Upload */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Apuntes del Estudiante (.pdf)
+                            Documento del Estudiante (.pdf)
                         </label>
                         <div className="flex items-center gap-2">
                             <input
