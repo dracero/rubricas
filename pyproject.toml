@@ -9,7 +9,6 @@ dependencies = [
     "sentence-transformers>=2.2.0",
     "qdrant-client>=1.7.0",
     "langsmith>=0.4.26",
-    "python-dotenv>=1.0.0",
     "pypdf>=4.0.0",
     "fastapi>=0.123.10",
     "uvicorn>=0.40.0",

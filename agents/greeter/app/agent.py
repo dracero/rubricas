@@ -10,7 +10,7 @@ import operator
 
 # LangGraph imports
 try:
-    from langgraph.graph import StateGraph, END
+    from langgraph.graph import StateGraph, END, START
     from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_core.prompts import ChatPromptTemplate
@@ -26,7 +26,28 @@ SUPPORTED_CONTENT_TYPES = ["text", "text/*"]
 class AgentState(TypedDict):
     """The state of the greeting agent."""
     messages: Annotated[List[BaseMessage], operator.add]
-    next_step: str
+
+
+def generate_greeting(state: AgentState, model: ChatGoogleGenerativeAI):
+    """Node that generates a greeting response."""
+    messages = state['messages']
+    last_message = messages[-1].content if messages else ""
+
+    prompt_template = ChatPromptTemplate.from_template(
+        "Eres un asistente AMIGABLE y ENTUSIASTA del sistema RubricAI. "
+        "Tu único trabajo es SALUDAR a los usuarios, explicarles qué hace el sistema "
+        "(generar y evaluar rúbricas académicas usando IA) y preguntarles qué necesitan. "
+        "Usa emojis. Sé breve pero cálido. \n\n"
+        "Usuario: {input}"
+    )
+    
+    chain = prompt_template | model
+    try:
+        response = chain.invoke({"input": last_message})
+        return {"messages": [response]}
+    except Exception as e:
+        logger.error(f"Error generating greeting: {e}")
+        return {"messages": [AIMessage(content="Lo siento, tuve un problema al generar el saludo.")]}
 
 
 class GreetingAgent:
@@ -58,28 +79,15 @@ class GreetingAgent:
             temperature=0.7,
         )
 
-        # Define the greeting node
-        def generate_greeting(state: AgentState):
-            messages = state['messages']
-            last_message = messages[-1].content if messages else ""
-
-            prompt_template = ChatPromptTemplate.from_template(
-                "Eres un asistente AMIGABLE y ENTUSIASTA del sistema RubricAI. "
-                "Tu único trabajo es SALUDAR a los usuarios, explicarles qué hace el sistema "
-                "(generar y evaluar rúbricas académicas usando IA) y preguntarles qué necesitan. "
-                "Usa emojis. Sé breve pero cálido. \n\n"
-                "Usuario: {input}"
-            )
-            
-            chain = prompt_template | model
-            response = chain.invoke({"input": last_message})
-            
-            return {"messages": [response]}
-
         # Build the graph
         workflow = StateGraph(AgentState)
-        workflow.add_node("greeter", generate_greeting)
-        workflow.set_entry_point("greeter")
+        
+        # Add nodes
+        # Use partial to inject dependencies if needed, or simple lambda
+        workflow.add_node("greeter", lambda state: generate_greeting(state, model))
+        
+        # Add edges
+        workflow.add_edge(START, "greeter")
         workflow.add_edge("greeter", END)
 
         self.app = workflow.compile()
