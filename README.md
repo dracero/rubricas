@@ -1,96 +1,126 @@
-# RubricAI - Sistema de Generación y Evaluación de Rúbricas (A2A/A2UI)
+# RubricAI - Sistema Multi-Agente de Rúbricas (A2A)
 
-Este sistema implementa una arquitectura basada en agentes (A2A) con una interfaz de usuario generativa (A2UI). Permite generar rúbricas académicas a partir de normativas PDF y evaluar trabajos estudiantiles utilizando estas rúbricas y tecnología RAG (Retrieval-Augmented Generation).
+Este sistema implementa una arquitectura **Multi-Agente (A2A)** orquestada por **BeeAI Router**, diseñada para la generación y evaluación de rúbricas académicas utilizando Inteligencia Artificial Generativa y RAG (Retrieval-Augmented Generation).
 
 ## 🧠 Arquitectura del Sistema
 
-El sistema consta de tres componentes principales:
+El sistema se compone de un Orquestador central y varios Agentes especializados que se comunican a través del protocolo **A2A (Agent-to-Agent)** sobre HTTP.
 
-1.  **Frontend (A2UI)**: Una aplicación React/Vite que actúa como cliente del protocolo A2A. No tiene lógica de negocio dura; renderiza la interfaz basándose en las solicitudes de acción (`ACTION_REQUEST`) del orquestador.
-2.  **Backend (A2A)**: Un servidor FastAPI que aloja varios agentes inteligentes:
-    *   **Orquestador (`server.py`)**: Recibe mensajes del usuario, decide qué agente debe atenderlos y envía instrucciones al frontend.
-    *   **Generador (`rubricas_core.py`)**: Crea rúbricas académicas procesando documentos normativos.
-    *   **Evaluador (`rubricador_qdrant_local.py`)**: Audita apuntes o trabajos contra una rúbrica.
-    *   **Base de Datos Vectorial**: Qdrant (para RAG y contexto).
-    *   **LLM**: Google Gemini 2.5 Flash.
+### Diagrama de Arquitectura
 
-## 📋 Prerrequisitos
+```mermaid
+graph TD
+    %% Estilos
+    classDef user fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef orchestrator fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+    classDef agent fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef subagent fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px,stroke-dasharray: 5 5;
+    classDef db fill:#e0e0e0,stroke:#616161,stroke-width:2px;
 
-*   **Python 3.12+** (Gestionado con `uv` preferiblemente)
-*   **Node.js 18+** y `npm`
-*   **Clave de API de Google Gemini**
-*   **Instancia de Qdrant** (URL y API Key)
+    User((👤 Usuario)):::user
+    Frontend[💻 Frontend A2UI<br>(React + Vite)]:::frontend
+    
+    subgraph Host ["🌐 Host (Orquestador)"]
+        Router[🐝 BeeAI Router<br>(Orquestador Central)]:::orchestrator
+        A2A_Client[📡 Remote Agent Connection<br>(Cliente A2A)]:::orchestrator
+    end
 
-## 🚀 Instalación Paso a Paso
+    subgraph Agentes ["🤖 Red de Agentes (A2A Servers)"]
+        direction TB
+        
+        subgraph GreeterPod ["👋 Greeter Agent"]
+            Greeter[Greeter<br>(LangGraph)]:::agent
+        end
 
-### 1. Clonar y Preparar el Entorno
+        subgraph GeneratorPod ["📝 Generator Agent (Google ADK)"]
+            GenRoot[Orquestador Generador]:::agent
+            Ontologo[Ontólogo]:::subagent
+            Rubricador[Rubricador]:::subagent
+            GenRoot --> Ontologo
+            GenRoot --> Rubricador
+        end
 
-```bash
-# Clonar repositorio (si aplica)
-# cd rubricas-app
+        subgraph EvaluatorPod ["⚖️ Evaluator Agent (Google ADK)"]
+            EvalRoot[Evaluador]:::agent
+        end
+    end
+
+    subgraph Storage ["💾 Persistencia"]
+        Qdrant[(Qdrant<br>Vector DB)]:::db
+    end
+
+    %% Conexiones
+    User <-->|Chat / Acciones| Frontend
+    Frontend <-->|API / JSON| Router
+    Router -->|Ruteo Inteligente| A2A_Client
+    
+    %% Conexiones A2A (HTTP / JSON-RPC)
+    A2A_Client <-->|A2A Protocol : message/send| Greeter
+    A2A_Client <-->|A2A Protocol : message/send| GenRoot
+    A2A_Client <-->|A2A Protocol : message/send| EvalRoot
+
+    %% Conexiones a Datos
+    Ontologo -->|Guarda Ontología| Qdrant
+    Rubricador -->|Lee Contexto| Qdrant
+    EvalRoot -->|Lee Contexto| Qdrant
 ```
 
-### 2. Configurar Variables de Entorno
+## 🤖 Descripción de los Agentes
 
-Crea un archivo `.env` en la raíz del proyecto (puedes copiar `.env.example`):
+### 1. 🐝 BeeAI Router (Orquestador)
+*   **Tecnología**: [BeeAI Framework](https://github.com/i-am-bee/beeai-framework) + Google Gemini de orquestador.
+*   **Rol**: Es el cerebro central del sistema. No realiza tareas por sí mismo, sino que analiza la intención del usuario y "enruta" la solicitud al agente especializado correspondiente.
+*   **Funcionamiento**: Utiliza un modelo ReAct para decidir qué herramienta (agente remoto) invocar basándose en la descripción semántica de cada agente.
 
-```env
-GOOGLE_API_KEY="tu_clave_de_gemini"
-QDRANT_URL="https://tu-cluster.qdrant.tech"
-QDRANT_API_KEY="tu_clave_de_qdrant"
+### 2. 👋 Greeter Agent (Bienvenida)
+*   **Tecnología**: [LangGraph](https://langchain-ai.github.io/langgraph/).
+*   **Puerto**: `10003`
+*   **Rol**: Agente conversacional ligero encargado de dar la bienvenida, explicar el propósito del sistema y guiar al usuario en sus primeros pasos.
+*   **Personalidad**: Amigable, entusiasta y servicial.
 
-# Opcional: LangSmith para observabilidad
-LANGSMITH_API_KEY="tu_clave_langsmith"
-```
+### 3. 📝 Generator Agent (Generador de Rúbricas)
+*   **Tecnología**: [Google ADK (Agent Development Kit)](https://github.com/google/generative-ai-python).
+*   **Puerto**: `10001`
+*   **Rol**: Genera instrumentos de evaluación complejos basándose en normativas.
+*   **Sub-Agentes**:
+    *   **Ontólogo**: Analiza documentos normativos (PDFs), extrae entidades y relaciones semánticas, y las guarda en Qdrant.
+    *   **Rubricador**: Consulta la base de conocimiento (Qdrant) para recuperar el contexto normativo y redacta la rúbrica detallada en Markdown.
 
-### 3. Instalar Dependencias
+### 4. ⚖️ Evaluator Agent (Evaluador)
+*   **Tecnología**: Google ADK.
+*   **Puerto**: `10002`
+*   **Rol**: Realiza auditorías académicas. Compara un trabajo entregado por un estudiante contra una rúbrica específica y el contexto institucional.
+*   **Capacidades**:
+    *   Lectura de documentos (PDF).
+    *   Búsqueda de contexto normativo en Qdrant (`buscar_contexto_para_evaluacion`).
+    *   Generación de informes de retroalimentación constructiva.
 
-Desde la raíz del proyecto, ejecuta el comando unificado:
+## 📡 Protocolo A2A (Agent-to-Agent)
 
-```bash
-npm run install:all
-```
+El sistema utiliza un protocolo de comunicación estandarizado basado en **JSON-RPC 2.0** sobre HTTP.
 
-> **Nota**: Esto instalará las dependencias de Python (via `uv`) y las dependencias de Node.js en la carpeta `frontend/`.
+*   **Discovery**: El orquestador descubre las capacidades de los agentes consultando el endpoint `/.well-known/agent.json` de cada servicio.
+*   **Mensajería**: Las interacciones se envían mediante el método `message/send`.
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "message/send",
+      "params": {
+        "message": {
+          "role": "user",
+          "parts": [{"type": "text", "text": "Hola"}],
+          "contextId": "..."
+        }
+      },
+      "id": "..."
+    }
+    ```
 
-## ▶️ Ejecución
+## 🛠️ Tecnologías Clave
 
-Para iniciar todo el sistema (Backend + Frontend) con un solo comando:
-
-```bash
-npm run dev
-```
-
-*   **Frontend**: http://localhost:5173
-*   **Backend**: http://localhost:8000
-*   **Documentación API**: http://localhost:8000/docs
-
-## 📖 Uso del Sistema
-
-1.  **Chat Orquestador**: Al abrir la aplicación, verás una interfaz de chat.
-    *   Escribe: *"Quiero crear una rúbrica"* o *"Generar evaluación"*.
-    *   El orquestador analizará tu intención y desplegará el componente correspondiente.
-
-2.  **Generación de Rúbricas**:
-    *   Sube un archivo PDF con la normativa (ej: "Reglamento de Tesis").
-    *   Selecciona el nivel educativo (Primer año, Avanzado, Posgrado).
-    *   El sistema extraerá la ontología, la guardará en Qdrant y generará una rúbrica Markdown descargable.
-
-3.  **Evaluación de Apuntes**:
-    *   Sube la rúbrica generada anteriormente (archivo `.txt` o `.md`).
-    *   Sube el documento del estudiante (PDF).
-    *   El agente "Auditor" leerá ambos, buscará contexto relevante en Qdrant y generará un informe de evaluación detallado.
-
-## 🛠️ Desarrollo
-
-*   **Backend**: El código está en `server.py` y los módulos `rubricas_*.py`. Usa `uv run uvicorn server:app --reload` para correr solo el backend.
-*   **Frontend**: El código React está en `frontend/src`. Usa `cd frontend && npm run dev` para correr solo el frontend.
-*   **Protocolo**: Las definiciones de comunicación están en `a2a_protocol.py`.
-
-## 📦 Estructura de Archivos Clave
-
-*   `server.py`: Punto de entrada del API y lógica del Orquestador.
-*   `a2a_protocol.py`: Definiciones de tipos de mensajes (Text, ActionRequest).
-*   `rubricas_core.py`: Lógica del agente Generador.
-*   `rubricador_qdrant_local.py`: Lógica del agente Evaluador.
-*   `frontend/src/components/ChatInterface.jsx`: Cliente del protocolo A2A.
+*   **Backend**: Python, FastAPI/Starlette, `uv`.
+*   **Frontend**: React, Vite, TailwindCSS.
+*   **IA / LLM**: Google Gemini 2.5 Flash.
+*   **Base de Datos Vectorial**: Qdrant (para almacenamiento de ontologías y RAG).
+*   **Frameworks de Agentes**: BeeAI (IBM), LangGraph, Google ADK.
