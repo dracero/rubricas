@@ -1,13 +1,9 @@
 """
-Generator ADK Agents — Proper ADK Multi-Agent Architecture.
+Generator Agents — Migrated to BeeAI Framework and Groq.
 
-Uses google.adk.agents.Agent with model, instruction, tools, and sub_agents.
-The ADK framework handles LLM calls internally. We provide tools for Qdrant operations.
-
-Architecture:
-    root_agent (orchestrator)
-    ├── ontologo_agent  (extracts ontology, saves to Qdrant via tool)
-    └── rubricador_agent (searches Qdrant for RAG, generates rubric)
+Uses beeai_framework to orchestrate:
+    ontologo_agent  (extracts ontology, saves to Qdrant via tool)
+    rubricador_agent (searches Qdrant for RAG, generates rubric)
 """
 
 import os
@@ -17,8 +13,11 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from collections import defaultdict
 
-from google.adk.agents import Agent
-from google.genai import types
+from beeai_framework.agents.react import ReActAgent
+from beeai_framework.adapters.groq import GroqChatModel
+from beeai_framework.memory import UnconstrainedMemory
+from beeai_framework.tools import tool
+
 from sentence_transformers import SentenceTransformer
 
 # Qdrant
@@ -55,9 +54,18 @@ def _get_qdrant_service() -> "QdrantService":
         _qdrant_service = QdrantService(config)
     return _qdrant_service
 
+def _get_groq_llm() -> GroqChatModel:
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        logger.warning("⚠️ GROQ_API_KEY not found in environment variables")
+    return GroqChatModel(
+        model_id="meta-llama/llama-4-scout-17b-16e-instruct",
+        api_key=api_key,
+    )
+
 
 # ============================================================================
-# QDRANT SERVICE (Infrastructure — not an Agent)
+# QDRANT SERVICE (Infrastructure)
 # ============================================================================
 
 class QdrantService:
@@ -197,9 +205,10 @@ class QdrantService:
 
 
 # ============================================================================
-# ADK TOOL FUNCTIONS
+# BEEAI TOOLS
 # ============================================================================
 
+@tool
 def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
     """Parses an ontology JSON and saves entities/relations to the Qdrant vector database.
 
@@ -260,6 +269,7 @@ def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
         return f"❌ Error guardando ontología: {str(e)}"
 
 
+@tool
 def buscar_contexto_qdrant(query: str) -> str:
     """Searches the Qdrant vector database for normative context relevant to the query.
 
@@ -300,97 +310,91 @@ def buscar_contexto_qdrant(query: str) -> str:
 
 
 # ============================================================================
-# ADK AGENT FACTORY
+# AGENT RUNNER FACADE
 # ============================================================================
 
-def create_generator_agent() -> Agent:
-    """Creates the root ADK agent with ontólogo and rubricador sub-agents.
-
-    Returns:
-        The root Agent instance ready to be used with Runner.
+async def run_generator_pipeline(document_text: str, prompt: str, level: str) -> str:
+    """Executes the two-step agent pipeline using BeeAI and Groq.
+    
+    1. Ontologo agent extracts ontology and saves it to Qdrant.
+    2. Rubricador agent fetches context from Qdrant and generates the rubric.
     """
-    # Initialize the QdrantService singleton eagerly
     _get_qdrant_service()
+    llm = _get_groq_llm()
 
-    # --- Sub-agent 1: Ontólogo ---
-    ontologo_agent = Agent(
-        name="ontologo",
-        model="gemini-2.5-flash",
-        instruction=(
+    logger.info("🤖 Starting Groq/BeeAI generator pipeline...")
+
+    # --- Phase 1: Ontologo ---
+    if document_text and len(document_text) > 50:
+        logger.info("🧠 Phase 1: Extracting ontology from document...")
+        
+        ontologo_memory = UnconstrainedMemory()
+        from beeai_framework.backend.message import SystemMessage
+        await ontologo_memory.add(SystemMessage(content=(
             "Eres un EXPERTO EN ONTOLOGÍAS EDUCATIVAS y análisis normativo.\n\n"
             "Tu tarea es:\n"
             "1. Analizar el texto normativo proporcionado por el usuario.\n"
-            "2. Extraer una ontología con ENTIDADES (conceptos, criterios, requisitos, roles) "
-            "y RELACIONES (REQUIERE, COMPLEMENTA, DEFINE, ES_PARTE_DE, REGULA).\n"
-            "3. Usar la herramienta `guardar_ontologia_en_qdrant` para persistir la ontología.\n\n"
-            "El JSON de ontología debe tener esta estructura:\n"
-            '{\n'
-            '  "entidades": [\n'
-            '    {"nombre": "id_unico", "tipo": "concepto|criterio|requisito|rol", '
-            '"contexto": "definición breve", "propiedades": {}}\n'
-            '  ],\n'
-            '  "relaciones": [\n'
-            '    {"origen": "id_1", "destino": "id_2", "tipo": "REQUIERE|ES_PARTE_DE|REGULA", '
-            '"propiedades": {}}\n'
-            '  ]\n'
-            '}\n\n'
-            "REGLAS:\n"
-            "- Extrae MÍNIMO 5 entidades por documento.\n"
-            "- Genera MÍNIMO 3 relaciones por entidad.\n"
-            "- Normaliza nombres en snake_case.\n"
-            "- Conecta densamente los conceptos.\n"
-            "- SIEMPRE usa la herramienta para guardar el resultado.\n"
-            "- Cuando termines, transfiere al agente `rubricador` para que genere la rúbrica."
-        ),
-        tools=[guardar_ontologia_en_qdrant],
-    )
+            "2. Extraer una ontología con ENTIDADES (conceptos, requisitos) "
+            "y RELACIONES (REQUIERE, COMPLEMENTA, REGULA).\n"
+            "3. Usar SÍ O SÍ la herramienta `guardar_ontologia_en_qdrant` para persistir la ontología.\n\n"
+            "El argumento `ontologia_json` debe ser un string JSON literario con la estructura:\n"
+            '{"entidades": [...], "relaciones": [...]}\n\n'
+            "NO incluyas explicaciones largas, simplemente extrae y guarda."
+        )))
 
-    # --- Sub-agent 2: Rubricador ---
-    rubricador_agent = Agent(
-        name="rubricador",
-        model="gemini-2.5-flash",
-        instruction=(
-            "Eres un ARQUITECTO PEDAGÓGICO experto en diseño de instrumentos de evaluación.\n\n"
-            "Tu tarea es:\n"
-            "1. Usar la herramienta `buscar_contexto_qdrant` para obtener contexto normativo "
-            "relevante de la base de conocimiento.\n"
-            "2. Generar una RÚBRICA DE EVALUACIÓN detallada basada en ese contexto.\n\n"
-            "ESTRUCTURA OBLIGATORIA de la rúbrica:\n"
-            "1. INFORMACIÓN GENERAL (Materia, Nivel, Objetivos)\n"
-            "2. COMPETENCIAS A EVALUAR (Cognitivas, Procedimentales, Actitudinales)\n"
-            "3. MATRIZ DE EVALUACIÓN (Dimensiones, Criterios, Escala 1-4, Evidencias observables)\n"
-            "4. NIVELES DE DOMINIO con ejemplos específicos\n"
-            "5. RECOMENDACIONES AL ESTUDIANTE\n\n"
-            "REGLAS CRÍTICAS:\n"
-            "- NO uses términos vagos como 'efectivo' o 'adecuado' sin definirlos.\n"
-            "- Cada criterio debe tener EVIDENCIAS OBSERVABLES.\n"
-            "- Incluye REQUISITOS MÍNIMOS concretos para aprobar.\n"
-            "- Usa formato Markdown.\n"
-            "- SIEMPRE busca contexto en Qdrant ANTES de generar la rúbrica."
-        ),
+        ontologo_agent = ReActAgent(
+            llm=llm,
+            tools=[guardar_ontologia_en_qdrant],
+            memory=ontologo_memory,
+        )
+
+        ontologo_prompt = f"Extrae la ontología y guárdala para el siguiente texto:\n\n{document_text[:20000]}"
+        try:
+            await ontologo_agent.run(ontologo_prompt)
+            logger.info("✅ Phase 1 complete.")
+        except Exception as e:
+            logger.warning(f"⚠️ Phase 1 (Ontologo) failed or timed out, continuing... {e}")
+
+    # --- Phase 2: Rubricador ---
+    logger.info("🧠 Phase 2: Generating Rubric via RAG...")
+    
+    rubricador_memory = UnconstrainedMemory()
+    await rubricador_memory.add(SystemMessage(content=(
+        "Eres un ARQUITECTO PEDAGÓGICO experto en diseño de instrumentos de evaluación.\n\n"
+        "Tu tarea es:\n"
+        "1. Usar la herramienta `buscar_contexto_qdrant` para obtener contexto.\n"
+        "2. Generar una RÚBRICA DE EVALUACIÓN detallada.\n\n"
+        "ESTRUCTURA OBLIGATORIA de la rúbrica:\n"
+        "1. INFORMACIÓN GENERAL (Materia, Nivel, Objetivos)\n"
+        "2. COMPETENCIAS A EVALUAR\n"
+        "3. MATRIZ DE EVALUACIÓN (Dimensiones, Criterios, Escala 1-4, Evidencias)\n"
+        "4. NIVELES DE DOMINIO con ejemplos específicos\n"
+        "5. RECOMENDACIONES AL ESTUDIANTE\n\n"
+        "Tu respuesta FINAL debe ser EXCLUSIVAMENTE la rúbrica formateada en Markdown."
+    )))
+
+    rubricador_agent = ReActAgent(
+        llm=llm,
         tools=[buscar_contexto_qdrant],
+        memory=rubricador_memory,
     )
 
-    # --- Root Agent (Orchestrator) ---
-    root_agent = Agent(
-        name="generador_rubricas",
-        model="gemini-2.5-flash",
-        instruction=(
-            "Eres el orquestador del sistema de generación de rúbricas académicas.\n\n"
-            "Tu flujo de trabajo es:\n"
-            "1. Si el usuario proporciona un documento normativo, transfiere al agente "
-            "`ontologo` para que extraiga la ontología y la guarde en Qdrant.\n"
-            "2. Luego transfiere al agente `rubricador` para que busque contexto en Qdrant "
-            "y genere la rúbrica detallada.\n"
-            "3. Si el usuario solo pide una rúbrica sin documento, transfiere directamente "
-            "al `rubricador` para que use el contexto ya existente en Qdrant.\n\n"
-            "IMPORTANTE:\n"
-            "- Siempre responde en español.\n"
-            "- Si se indica un nivel educativo (inicial, avanzado, posgrado), "
-            "inclúyelo en la solicitud al rubricador.\n"
-            "- No generes la rúbrica tú mismo, delega siempre al rubricador."
-        ),
-        sub_agents=[ontologo_agent, rubricador_agent],
+    rubricador_prompt = (
+        f"NIVEL EDUCATIVO: {level}\n"
+        f"SOLICITUD: {prompt}\n"
+        f"Por favor, genera la rúbrica ahora."
     )
 
-    return root_agent
+    try:
+        response = await rubricador_agent.run(rubricador_prompt)
+        if hasattr(response, 'result') and hasattr(response.result, 'text'):
+            return response.result.text
+        elif hasattr(response, 'last_message') and response.last_message:
+            content = response.last_message.content
+            if isinstance(content, list):
+                return "".join([c.text for c in content if hasattr(c, "text")])
+            return str(content)
+        return str(response)
+    except Exception as e:
+        logger.error(f"❌ Phase 2 (Rubricador) failed: {e}")
+        return f"Error al generar la rúbrica: {str(e)}"

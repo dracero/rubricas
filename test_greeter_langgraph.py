@@ -7,9 +7,9 @@ from agents.greeter.app.agent import GreetingAgent
 load_dotenv()
 
 async def test_greeter():
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        print("❌ GOOGLE_API_KEY not found in .env")
+        print("❌ GROQ_API_KEY not found in .env")
         return
 
     print("🧪 Testing Greeter Agent with LangGraph...")

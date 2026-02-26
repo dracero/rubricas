@@ -1,20 +1,19 @@
 """
-Evaluator ADK Agents — Proper ADK Multi-Agent Architecture.
+Evaluator Agents — Migrated to BeeAI Framework and Groq.
 
-Uses google.adk.agents.Agent with model, instruction, tools, and sub_agents.
-The ADK framework handles LLM calls internally. We provide tools for Qdrant operations.
-
-Architecture:
-    root_agent (evaluator)
-    └── uses `buscar_contexto_para_evaluacion` tool to enrich rubric with normative context
+Uses beeai_framework to orchestrate:
+    evaluator_agent (searches Qdrant for RAG, generates evaluation report)
 """
 
 import os
 import logging
 from typing import Dict, List, Any, Optional
 
-from google.adk.agents import Agent
-from google.genai import types
+from beeai_framework.agents.react import ReActAgent
+from beeai_framework.adapters.groq import GroqChatModel
+from beeai_framework.memory import UnconstrainedMemory
+from beeai_framework.tools import tool
+
 from sentence_transformers import SentenceTransformer
 
 # Qdrant
@@ -44,9 +43,18 @@ def _get_qdrant_service() -> "QdrantService":
         _qdrant_service = QdrantService(config)
     return _qdrant_service
 
+def _get_groq_llm() -> GroqChatModel:
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        logger.warning("⚠️ GROQ_API_KEY not found in environment variables")
+    return GroqChatModel(
+        model_id="meta-llama/llama-4-scout-17b-16e-instruct",
+        api_key=api_key,
+    )
+
 
 # ============================================================================
-# QDRANT SERVICE (Infrastructure — not an Agent)
+# QDRANT SERVICE (Infrastructure)
 # ============================================================================
 
 class QdrantService:
@@ -121,9 +129,10 @@ class QdrantService:
 
 
 # ============================================================================
-# ADK TOOL FUNCTIONS
+# BEEAI TOOLS
 # ============================================================================
 
+@tool
 def buscar_contexto_para_evaluacion(consulta: str) -> str:
     """Busca contexto normativo relevante en la base de conocimientos (Qdrant).
 
@@ -159,46 +168,68 @@ def buscar_contexto_para_evaluacion(consulta: str) -> str:
 
 
 # ============================================================================
-# ADK AGENT FACTORY
+# AGENT RUNNER FACADE
 # ============================================================================
 
-def create_evaluator_agent() -> Agent:
-    """Creates the root ADK agent for evaluation.
-
-    Returns:
-        The Agent instance ready to be used with Runner.
-    """
-    # Initialize the QdrantService singleton eagerly
+async def run_evaluator_pipeline(rubric_text: str, document_text: str) -> str:
+    """Executes the evaluator agent pipeline using BeeAI and Groq."""
     _get_qdrant_service()
+    llm = _get_groq_llm()
 
-    # --- Root Agent (Evaluator) ---
-    evaluator_agent = Agent(
-        name="evaluador_rubricas",
-        model="gemini-2.5-flash",
-        instruction=(
-            "Eres un AUDITOR ACADÉMICO riguroso y experto en evaluación educativa.\n\n"
-            "TU TAREA:\n"
-            "Evaluar un trabajo o documento del estudiante contrastándolo con una RÚBRICA "
-            "proporcionada y el CONTEXTO NORMATIVO institucional.\n\n"
-            "PROCESO:\n"
-            "1. Analiza la rúbrica y el documento que se te entregarán.\n"
-            "2. USA la herramienta `buscar_contexto_para_evaluacion` para obtener normativas "
-            "relacionadas con los temas de la rúbrica (obligatorio si la rúbrica menciona normas).\n"
-            "3. Genera un INFORME DE EVALUACIÓN detallado.\n\n"
-            "ESTRUCTURA DEL INFORME:\n"
-            "- **Resumen General**: Visión global del desempeño.\n"
-            "- **Evaluación por Criterio**: Para cada criterio de la rúbrica:\n"
-            "  - Calificación/Nivel asignado.\n"
-            "  - **Evidencia**: Cita textual o referencia específica del documento del estudiante.\n"
-            "  - Justificación basada en la rúbrica y la normativa (si aplica).\n"
-            "- **Oportunidades de Mejora**: Consejos concretos para el estudiante.\n"
-            "- **Conclusión Final**: Dictamen de aprobación o revisión.\n\n"
-            "REGLAS:\n"
-            "- Sé objetivo y constructivo.\n"
-            "- Si el documento del estudiante es muy corto o irrelevante, indícalo claramente.\n"
-            "- Basa tus juicios SOLO en la evidencia presentada y la rúbrica."
-        ),
+    logger.info("🤖 Starting Groq/BeeAI evaluator pipeline...")
+
+    evaluator_memory = UnconstrainedMemory()
+    from beeai_framework.backend.message import SystemMessage
+    await evaluator_memory.add(SystemMessage(content=(
+        "Eres un AUDITOR ACADÉMICO riguroso y experto en evaluación educativa.\n\n"
+        "TU TAREA:\n"
+        "Evaluar un trabajo o documento del estudiante contrastándolo con una RÚBRICA "
+        "proporcionada y el CONTEXTO NORMATIVO institucional.\n\n"
+        "PROCESO:\n"
+        "1. Analiza la rúbrica y el documento que se te entregarán.\n"
+        "2. USA la herramienta `buscar_contexto_para_evaluacion` para obtener normativas "
+        "relacionadas con los temas de la rúbrica (obligatorio si la rúbrica menciona normas).\n"
+        "3. Genera un INFORME DE EVALUACIÓN detallado.\n\n"
+        "ESTRUCTURA DEL INFORME:\n"
+        "- **Resumen General**: Visión global del desempeño.\n"
+        "- **Evaluación por Criterio**: Para cada criterio de la rúbrica:\n"
+        "  - Calificación/Nivel asignado.\n"
+        "  - **Evidencia**: Cita textual o referencia específica del documento del estudiante.\n"
+        "  - Justificación basada en la rúbrica y la normativa (si aplica).\n"
+        "- **Oportunidades de Mejora**: Consejos concretos para el estudiante.\n"
+        "- **Conclusión Final**: Dictamen de aprobación o revisión.\n\n"
+        "REGLAS:\n"
+        "- Sé objetivo y constructivo.\n"
+        "- Basa tus juicios SOLO en la evidencia presentada y la rúbrica.\n"
+        "Tu respuesta FINAL debe ser EXCLUSIVAMENTE el informe de evaluación en Markdown."
+    )))
+
+    evaluator_agent = ReActAgent(
+        llm=llm,
         tools=[buscar_contexto_para_evaluacion],
+        memory=evaluator_memory,
     )
 
-    return evaluator_agent
+    evaluator_prompt = (
+        f"Por favor evalúa el siguiente documento usando la rúbrica proporcionada.\n\n"
+        f"RÚBRICA DE REFERENCIA:\n"
+        f"{rubric_text[:10000]}\n\n"
+        f"DOCUMENTO DEL ESTUDIANTE:\n"
+        f"{document_text[:20000]}\n\n"
+        f"Instrucciones adicionales: Busca contexto normativo en Qdrant si es necesario "
+        f"para validar los criterios de la rúbrica."
+    )
+
+    try:
+        response = await evaluator_agent.run(evaluator_prompt)
+        if hasattr(response, 'result') and hasattr(response.result, 'text'):
+            return response.result.text
+        elif hasattr(response, 'last_message') and response.last_message:
+            content = response.last_message.content
+            if isinstance(content, list):
+                return "".join([c.text for c in content if hasattr(c, "text")])
+            return str(content)
+        return str(response)
+    except Exception as e:
+        logger.error(f"❌ Evaluator agent failed: {e}")
+        return f"Error al generar la evaluación: {str(e)}"

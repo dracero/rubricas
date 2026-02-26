@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 @click.option("--port", "port", default=10001)
 def main(host, port):
     """Start the Rubric Generator A2A agent server."""
-    if not os.getenv("GOOGLE_API_KEY"):
-        logger.error("❌ GOOGLE_API_KEY not set")
+    if not os.getenv("GROQ_API_KEY"):
+        logger.error("❌ GROQ_API_KEY not set")
         exit(1)
 
     capabilities = AgentCapabilities(streaming=False)

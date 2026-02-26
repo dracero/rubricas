@@ -1,18 +1,19 @@
 """Greeter Agent - Handles greetings and system explanations.
 
-Uses LangGraph + Google Gemini to provide friendly responses
+Uses LangGraph + Groq (Llama 3.3) to provide friendly responses
 about the RubricAI system.
 """
 
 import logging
 from typing import Any, Dict, List, TypedDict, Annotated
 import operator
+import os
 
 # LangGraph imports
 try:
     from langgraph.graph import StateGraph, END, START
     from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_groq import ChatGroq
     from langchain_core.prompts import ChatPromptTemplate
     LANGGRAPH_AVAILABLE = True
 except ImportError:
@@ -28,7 +29,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
 
 
-def generate_greeting(state: AgentState, model: ChatGoogleGenerativeAI):
+def generate_greeting(state: AgentState, model: ChatGroq):
     """Node that generates a greeting response."""
     messages = state['messages']
     last_message = messages[-1].content if messages else ""
@@ -67,15 +68,15 @@ class GreetingAgent:
         if not LANGGRAPH_AVAILABLE:
             raise RuntimeError(
                 "Missing dependencies for Greeter agent. "
-                "Please ensure 'langgraph' is installed."
+                "Please ensure 'langgraph' and 'langchain-groq' are installed."
             )
 
         logger.info("🔧 Initializing Greeter LangGraph...")
 
         # Initialize LLM
-        model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=self.api_key,
+        model = ChatGroq(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            groq_api_key=self.api_key,
             temperature=0.7,
         )
 
@@ -83,7 +84,6 @@ class GreetingAgent:
         workflow = StateGraph(AgentState)
         
         # Add nodes
-        # Use partial to inject dependencies if needed, or simple lambda
         workflow.add_node("greeter", lambda state: generate_greeting(state, model))
         
         # Add edges
@@ -105,3 +105,4 @@ class GreetingAgent:
         # Extract the last message content
         last_message = result['messages'][-1]
         return last_message.content
+

@@ -19,6 +19,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv() # Load env vars early
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -52,25 +54,6 @@ OUTPUT_DIR = Path("/tmp/rubricas_output")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ============================================================================
-# FastAPI App
-# ============================================================================
-
-app = FastAPI(
-    title="RubricAI Orchestrator",
-    description="A2A Host that routes requests to specialized agents",
-    version="1.0.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Global state
 # Global state
 agents: dict[str, RemoteAgentConnection] = {}
 router: BeeRouter | None = None
@@ -130,18 +113,30 @@ async def discover_agents():
     """Discover all configured A2A agents."""
     global agents, router
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError("GOOGLE_API_KEY not set")
+        raise RuntimeError("GROQ_API_KEY not set")
+
+    max_retries = 3
+    retry_delay = 3  # seconds
 
     for name, url in AGENT_URLS.items():
         conn = RemoteAgentConnection(url)
-        try:
-            await conn.discover()
-            agents[name] = conn
-            logger.info(f"✅ Discovered agent: {name} at {url}")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not discover agent '{name}' at {url}: {e}")
+        for attempt in range(1, max_retries + 1):
+            try:
+                await conn.discover()
+                agents[name] = conn
+                logger.info(f"✅ Discovered agent: {name} at {url}")
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.info(
+                        f"⏳ Agent '{name}' not ready (attempt {attempt}/{max_retries}), "
+                        f"retrying in {retry_delay}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.warning(f"⚠️ Could not discover agent '{name}' at {url}: {e}")
 
     if not agents:
         logger.error("❌ No agents discovered! Make sure agent servers are running.")
@@ -168,20 +163,43 @@ async def discover_agents():
         logger.warning("⚠️ No tools created, router not initialized")
 
 
-@app.on_event("startup")
-async def startup():
-    """Discover agents on server startup."""
+# ============================================================================
+# Lifespan (replaces deprecated on_event)
+# ============================================================================
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Handle startup and shutdown events."""
+    # --- Startup ---
     logger.info("=" * 60)
     logger.info("🧠 RubricAI Orchestrator - A2A Host")
     logger.info("=" * 60)
     await discover_agents()
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Close agent connections."""
+    yield
+    # --- Shutdown ---
     for conn in agents.values():
         await conn.close()
+
+
+# ============================================================================
+# FastAPI App
+# ============================================================================
+
+app = FastAPI(
+    title="RubricAI Orchestrator",
+    description="A2A Host that routes requests to specialized agents",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ============================================================================

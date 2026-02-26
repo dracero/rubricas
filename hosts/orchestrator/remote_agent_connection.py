@@ -1,6 +1,6 @@
 """Remote Agent Connection - Connects to A2A agent servers.
 
-Discovers agent capabilities via /.well-known/agent.json and
+Discovers agent capabilities via /.well-known/agent-card.json and
 sends requests using the A2A protocol.
 """
 
@@ -26,25 +26,6 @@ class RemoteAgentConnection:
         self.agent_card: Optional[Dict[str, Any]] = None
         self._client = httpx.AsyncClient(timeout=600.0)  # 10min for full pipeline
 
-    async def discover(self) -> Dict[str, Any]:
-        """Discover agent capabilities via /.well-known/agent.json.
-
-        Returns:
-            Agent card dictionary with capabilities and skills
-        """
-        url = f"{self.agent_url}/.well-known/agent.json"
-        try:
-            response = await self._client.get(url)
-            response.raise_for_status()
-            self.agent_card = response.json()
-            logger.info(
-                f"✅ Discovered agent: {self.agent_card.get('name', 'unknown')} "
-                f"at {self.agent_url}"
-            )
-            return self.agent_card
-        except Exception as e:
-            logger.error(f"❌ Failed to discover agent at {url}: {e}")
-            raise
 
     def _get_trace_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
         """Inject LangSmith distributed tracing headers."""
@@ -63,12 +44,12 @@ class RemoteAgentConnection:
         return headers
 
     async def discover(self) -> Dict[str, Any]:
-        """Discover agent capabilities via /.well-known/agent.json.
+        """Discover agent capabilities via /.well-known/agent-card.json.
 
         Returns:
             Agent card dictionary with capabilities and skills
         """
-        url = f"{self.agent_url}/.well-known/agent.json"
+        url = f"{self.agent_url}/.well-known/agent-card.json"
         try:
             response = await self._client.get(url)
             response.raise_for_status()

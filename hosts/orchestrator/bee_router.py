@@ -5,7 +5,7 @@ import logging
 from typing import List, Optional
 
 from beeai_framework.agents.react import ReActAgent
-from beeai_framework.adapters.gemini import GeminiChatModel
+from beeai_framework.adapters.groq import GroqChatModel
 from beeai_framework.memory import UnconstrainedMemory
 from hosts.orchestrator.agent_tools import RemoteAgentTool
 from beeai_framework.agents.react.runners.default.runner import DefaultRunner
@@ -76,13 +76,13 @@ class GeminiReActAgent(ReActAgent):
 class BeeRouter:
     """Orchestrator router using BeeAI Framework."""
     
-    def __init__(self, tools: List[RemoteAgentTool], model_name: str = "gemini-2.5-flash"):
+    def __init__(self, tools: List[RemoteAgentTool], model_name: str = "meta-llama/llama-4-scout-17b-16e-instruct"):
         """Initialize the router with tools and LLM."""
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            logger.warning("⚠️ GOOGLE_API_KEY not found in environment variables")
+            logger.warning("⚠️ GROQ_API_KEY not found in environment variables")
         
-        self.llm = GeminiChatModel(
+        self.llm = GroqChatModel(
             model_id=model_name,
             api_key=api_key,
         )

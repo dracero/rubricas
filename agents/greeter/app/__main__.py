@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 @click.option("--port", "port", default=10003)
 def main(host, port):
     """Start the Greeter A2A agent server."""
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        logger.error("❌ GOOGLE_API_KEY not set")
+        logger.error("❌ GROQ_API_KEY not set")
         exit(1)
 
     capabilities = AgentCapabilities(streaming=False)
