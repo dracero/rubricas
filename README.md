@@ -35,33 +35,33 @@ graph TD
     classDef db fill:#e0e0e0,stroke:#616161,stroke-width:2px;
 
     User((👤 Usuario)):::user
-    Frontend[💻 Frontend A2UI<br>(React + Vite)]:::frontend
+    Frontend["💻 Frontend A2UI<br>(React + Vite)"]:::frontend
     
     subgraph Backend ["🌐 Backend (Orquestador FastAPI)"]
-        API[API Endpoints<br>/api/chat, /api/llm/config]:::orchestrator
-        Router[🐝 BeeAI Router<br>ReAct Agent]:::orchestrator
-        A2A_Client[📡 Remote Agent Tool<br>(Cliente A2A)]:::orchestrator
+        API["API Endpoints<br>/api/chat, /api/llm/config"]:::orchestrator
+        Router["🐝 BeeAI Router<br>ReAct Agent"]:::orchestrator
+        A2A_Client["📡 Remote Agent Tool<br>(Cliente A2A)"]:::orchestrator
         API --> Router
         Router --> A2A_Client
     end
 
     subgraph Agentes ["🤖 Red de Agentes (A2A Servers)"]
         direction TB
-        Greeter[👋 Greeter<br>(LangGraph - Port 10003)]:::agent
-        Generator[📝 Generator<br>(BeeAI - Port 10001)]:::agent
-        Evaluator[⚖️ Evaluator<br>(BeeAI - Port 10002)]:::agent
+        Greeter["👋 Greeter<br>(LangGraph - Port 10003)"]:::agent
+        Generator["📝 Generator<br>(BeeAI - Port 10001)"]:::agent
+        Evaluator["⚖️ Evaluator<br>(BeeAI - Port 10002)"]:::agent
     end
 
     subgraph Storage ["💾 Persistencia"]
-        Qdrant[(Qdrant Vector DB)]:::db
+        Qdrant[("Qdrant Vector DB")]:::db
     end
 
     User <-->|Selección LLM / Chat / Upload| Frontend
-    Frontend <-->|A2A Protocol (JSON)| API
+    Frontend <-->|A2A Protocol JSON| API
     
-    A2A_Client <-->|A2A POST /message/send<br>+ injected llm_config| Greeter
-    A2A_Client <-->|A2A POST /message/send<br>+ injected llm_config| Generator
-    A2A_Client <-->|A2A POST /message/send<br>+ injected llm_config| Evaluator
+    A2A_Client <-->|"A2A POST /message/send<br>+ injected llm_config"| Greeter
+    A2A_Client <-->|"A2A POST /message/send<br>+ injected llm_config"| Generator
+    A2A_Client <-->|"A2A POST /message/send<br>+ injected llm_config"| Evaluator
 
     Generator --> Qdrant
     Evaluator --> Qdrant
