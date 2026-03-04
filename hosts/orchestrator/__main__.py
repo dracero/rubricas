@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from hosts.orchestrator.remote_agent_connection import RemoteAgentConnection
 from hosts.orchestrator.agent_tools import RemoteAgentTool
 from hosts.orchestrator.bee_router import BeeRouter
+from common.llm_factory import get_catalog, resolve_llm_config, LLM_CATALOG
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,13 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Global state
 agents: dict[str, RemoteAgentConnection] = {}
 router: BeeRouter | None = None
+
+# LLM Configuration (initialized from .env, overridable from frontend)
+llm_config: dict = {
+    "provider": "groq",
+    "model_id": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "api_key": os.getenv("GROQ_API_KEY", ""),
+}
 
 
 class ChatRequest(BaseModel):
@@ -157,7 +165,7 @@ async def discover_agents():
         logger.info(f"🛠️ Created tool: {tool.name}")
 
     if tools:
-        router = BeeRouter(tools=tools)
+        router = BeeRouter(tools=tools, llm_config=llm_config)
         logger.info("🐝 BeeRouter initialized with BeeAI Framework")
     else:
         logger.warning("⚠️ No tools created, router not initialized")
@@ -238,6 +246,70 @@ async def rediscover():
     """Re-discover all agents (useful if an agent was restarted)."""
     await discover_agents()
     return {"status": "ok", "agents": list(agents.keys())}
+
+
+# ============================================================================
+# API Endpoints - LLM Configuration
+# ============================================================================
+
+
+class LLMConfigRequest(BaseModel):
+    provider: str = ""
+    model_id: str = ""
+    api_key: str = ""
+
+
+@app.get("/api/llm/catalog")
+async def get_llm_catalog():
+    """Return available LLM providers and models."""
+    return get_catalog()
+
+
+@app.get("/api/llm/config")
+async def get_llm_config():
+    """Return current LLM config (API key masked)."""
+    masked = llm_config.copy()
+    key = masked.get("api_key", "")
+    masked["api_key_hint"] = f"****{key[-4:]}" if len(key) > 4 else "(usando .env)"
+    del masked["api_key"]
+    return masked
+
+
+@app.post("/api/llm/config")
+async def set_llm_config(request: LLMConfigRequest):
+    """Update LLM configuration. Empty fields keep current values."""
+    global llm_config, router
+
+    if request.provider:
+        if request.provider not in LLM_CATALOG:
+            raise HTTPException(status_code=400, detail=f"Proveedor no soportado: {request.provider}")
+        llm_config["provider"] = request.provider
+        # Set default model for the new provider if model not specified
+        if not request.model_id:
+            llm_config["model_id"] = LLM_CATALOG[request.provider]["models"][0]["id"]
+        # Set API key from env if not provided
+        if not request.api_key:
+            env_key = LLM_CATALOG[request.provider]["env_key"]
+            llm_config["api_key"] = os.getenv(env_key, "")
+
+    if request.model_id:
+        llm_config["model_id"] = request.model_id
+
+    if request.api_key:
+        llm_config["api_key"] = request.api_key
+
+    # Recreate router with new LLM config
+    if router and agents:
+        tools = []
+        for name, conn in agents.items():
+            description = conn.get_description() or f"Agent {name}"
+            tool = RemoteAgentTool(name=f"{name}_tool", description=description, conn=conn)
+            tools.append(tool)
+        router = BeeRouter(tools=tools, llm_config=llm_config)
+        logger.info(f"🔄 BeeRouter recreated with new LLM config: {llm_config['provider']}/{llm_config['model_id']}")
+
+    logger.info(f"✅ LLM config updated: {llm_config['provider']}/{llm_config['model_id']}")
+    return {"status": "ok", "provider": llm_config["provider"], "model_id": llm_config["model_id"]}
 
 
 # ============================================================================
@@ -370,6 +442,7 @@ async def generate_rubric(request: GenerateRequest):
         "prompt": request.prompt,
         "level": request.level,
         "document_text": document_text[:30000],  # Limit to avoid token overflow
+        "llm_config": llm_config,
     }, ensure_ascii=False)
 
     try:
@@ -483,6 +556,7 @@ async def run_evaluation(request: EvaluateRequest):
         "type": "evaluate_document",
         "rubric_text": rubric_text[:20000],
         "document_text": document_text[:30000],
+        "llm_config": llm_config,
     }, ensure_ascii=False)
 
     try:

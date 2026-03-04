@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User, Bot, Sparkles } from 'lucide-react';
+import { Send, User, Bot, Sparkles, Settings } from 'lucide-react';
 import RubricGenerator from './RubricGenerator';
 import RubricEvaluator from './RubricEvaluator';
+import WelcomeSetup from './WelcomeSetup';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const ChatInterface = () => {
+    const [setupDone, setSetupDone] = useState(false);
+    const [activeModel, setActiveModel] = useState(null);
     const [messages, setMessages] = useState([
         {
             source: 'orchestrator',
@@ -25,6 +28,16 @@ const ChatInterface = () => {
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
+    // Fetch active model info when setup is done
+    useEffect(() => {
+        if (setupDone) {
+            fetch('/api/llm/config')
+                .then(res => res.json())
+                .then(data => setActiveModel(data))
+                .catch(() => { });
+        }
+    }, [setupDone]);
 
     const handleSend = async (e) => {
         e.preventDefault();
@@ -88,8 +101,33 @@ const ChatInterface = () => {
         return <p className="whitespace-pre-wrap">{msg.content}</p>;
     };
 
+    // Show WelcomeSetup before the chat
+    if (!setupDone) {
+        return <WelcomeSetup onComplete={() => setSetupDone(true)} />;
+    }
+
     return (
         <div className="flex flex-col h-[calc(100vh-100px)] bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+
+            {/* Header with model badge */}
+            <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    <span className="text-sm font-medium text-gray-700">RubricAI</span>
+                </div>
+                <button
+                    onClick={() => setSetupDone(false)}
+                    className="flex items-center gap-2 px-3 py-1 rounded-lg text-xs text-gray-500 hover:bg-gray-200 transition"
+                    title="Cambiar modelo"
+                >
+                    {activeModel && (
+                        <span className="text-blue-600 font-medium">
+                            {activeModel.provider}/{activeModel.model_id?.split('/').pop()}
+                        </span>
+                    )}
+                    <Settings className="w-3.5 h-3.5" />
+                </button>
+            </div>
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6">
@@ -175,3 +213,4 @@ const ChatInterface = () => {
 };
 
 export default ChatInterface;
+

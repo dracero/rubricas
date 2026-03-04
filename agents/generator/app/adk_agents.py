@@ -14,7 +14,6 @@ from datetime import datetime
 from collections import defaultdict
 
 from beeai_framework.agents.react import ReActAgent
-from beeai_framework.adapters.groq import GroqChatModel
 from beeai_framework.memory import UnconstrainedMemory
 from beeai_framework.tools import tool
 
@@ -30,6 +29,7 @@ except ImportError:
     QDRANT_AVAILABLE = False
 
 from common.config import ConfiguracionColaba, traceable
+from common.llm_factory import create_llm
 
 # Domain imports (data structures & constants)
 from .domain import (
@@ -54,13 +54,13 @@ def _get_qdrant_service() -> "QdrantService":
         _qdrant_service = QdrantService(config)
     return _qdrant_service
 
-def _get_groq_llm() -> GroqChatModel:
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        logger.warning("⚠️ GROQ_API_KEY not found in environment variables")
-    return GroqChatModel(
-        model_id="meta-llama/llama-4-scout-17b-16e-instruct",
-        api_key=api_key,
+def _get_llm(llm_config: dict = None):
+    """Create an LLM instance using the factory."""
+    config = llm_config or {}
+    return create_llm(
+        provider=config.get("provider", "groq"),
+        model_id=config.get("model_id", ""),
+        api_key=config.get("api_key", ""),
     )
 
 
@@ -313,14 +313,14 @@ def buscar_contexto_qdrant(query: str) -> str:
 # AGENT RUNNER FACADE
 # ============================================================================
 
-async def run_generator_pipeline(document_text: str, prompt: str, level: str) -> str:
-    """Executes the two-step agent pipeline using BeeAI and Groq.
+async def run_generator_pipeline(document_text: str, prompt: str, level: str, llm_config: dict = None) -> str:
+    """Executes the two-step agent pipeline using BeeAI.
     
     1. Ontologo agent extracts ontology and saves it to Qdrant.
     2. Rubricador agent fetches context from Qdrant and generates the rubric.
     """
     _get_qdrant_service()
-    llm = _get_groq_llm()
+    llm = _get_llm(llm_config)
 
     logger.info("🤖 Starting Groq/BeeAI generator pipeline...")
 

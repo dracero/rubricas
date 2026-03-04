@@ -41,6 +41,7 @@ class RubricEvaluatorAgent:
                     rubric_text=data.get("rubric_text", ""),
                     document_text=data.get("document_text", ""),
                     session_id=session_id or "default",
+                    llm_config=data.get("llm_config"),
                 )
         except (json.JSONDecodeError, TypeError):
             pass
@@ -48,7 +49,10 @@ class RubricEvaluatorAgent:
         # Fallback: plain text query
         return self._evaluate_text_query(query)
 
-    def _invoke_with_data(self, rubric_text: str, document_text: str, session_id: str) -> str:
+    def _invoke_with_data(
+        self, rubric_text: str, document_text: str, session_id: str,
+        llm_config: dict = None,
+    ) -> str:
         """Runs the evaluator pipeline."""
         logger.info(f"⚖️ Evaluator pipeline: doc={len(document_text)} chars, rubric={len(rubric_text)} chars")
 
@@ -61,11 +65,11 @@ class RubricEvaluatorAgent:
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     result = pool.submit(
                         asyncio.run,
-                        run_evaluator_pipeline(rubric_text, document_text)
+                        run_evaluator_pipeline(rubric_text, document_text, llm_config)
                     ).result()
             except RuntimeError:
                 # No event loop running — safe to use asyncio.run()
-                result = asyncio.run(run_evaluator_pipeline(rubric_text, document_text))
+                result = asyncio.run(run_evaluator_pipeline(rubric_text, document_text, llm_config))
 
             if not result:
                 return "⚠️ El agente no generó una respuesta. Intente nuevamente."

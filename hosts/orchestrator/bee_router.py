@@ -2,10 +2,9 @@
 
 import os
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from beeai_framework.agents.react import ReActAgent
-from beeai_framework.adapters.groq import GroqChatModel
 from beeai_framework.memory import UnconstrainedMemory
 from hosts.orchestrator.agent_tools import RemoteAgentTool
 from beeai_framework.agents.react.runners.default.runner import DefaultRunner
@@ -13,6 +12,7 @@ from beeai_framework.parsers.line_prefix import LinePrefixParser, LinePrefixPars
 from beeai_framework.parsers.field import ParserField
 from beeai_framework.utils.strings import create_strenum
 from beeai_framework.agents.react.runners.base import BaseRunner
+from common.llm_factory import create_llm
 from functools import cached_property
 from typing import Callable, Any
 try:
@@ -76,16 +76,19 @@ class GeminiReActAgent(ReActAgent):
 class BeeRouter:
     """Orchestrator router using BeeAI Framework."""
     
-    def __init__(self, tools: List[RemoteAgentTool], model_name: str = "meta-llama/llama-4-scout-17b-16e-instruct"):
-        """Initialize the router with tools and LLM."""
-        api_key = os.environ.get("GROQ_API_KEY")
-        if not api_key:
-            logger.warning("⚠️ GROQ_API_KEY not found in environment variables")
+    def __init__(self, tools: List[RemoteAgentTool], llm_config: Optional[Dict] = None):
+        """Initialize the router with tools and LLM config.
         
-        self.llm = GroqChatModel(
-            model_id=model_name,
-            api_key=api_key,
-        )
+        Args:
+            tools: List of remote agent tools
+            llm_config: Dict with provider, model_id, api_key (falls back to env)
+        """
+        config = llm_config or {}
+        provider = config.get("provider", "groq")
+        model_id = config.get("model_id", "meta-llama/llama-4-scout-17b-16e-instruct")
+        api_key = config.get("api_key", "")
+        
+        self.llm = create_llm(provider=provider, model_id=model_id, api_key=api_key)
         self.memory = UnconstrainedMemory()
         
         self.agent = GeminiReActAgent(

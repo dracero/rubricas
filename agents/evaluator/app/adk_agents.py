@@ -10,7 +10,6 @@ import logging
 from typing import Dict, List, Any, Optional
 
 from beeai_framework.agents.react import ReActAgent
-from beeai_framework.adapters.groq import GroqChatModel
 from beeai_framework.memory import UnconstrainedMemory
 from beeai_framework.tools import tool
 
@@ -26,6 +25,7 @@ except ImportError:
     QDRANT_AVAILABLE = False
 
 from common.config import ConfiguracionColaba, traceable
+from common.llm_factory import create_llm
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +43,13 @@ def _get_qdrant_service() -> "QdrantService":
         _qdrant_service = QdrantService(config)
     return _qdrant_service
 
-def _get_groq_llm() -> GroqChatModel:
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        logger.warning("⚠️ GROQ_API_KEY not found in environment variables")
-    return GroqChatModel(
-        model_id="meta-llama/llama-4-scout-17b-16e-instruct",
-        api_key=api_key,
+def _get_llm(llm_config: dict = None):
+    """Create an LLM instance using the factory."""
+    config = llm_config or {}
+    return create_llm(
+        provider=config.get("provider", "groq"),
+        model_id=config.get("model_id", ""),
+        api_key=config.get("api_key", ""),
     )
 
 
@@ -171,10 +171,10 @@ def buscar_contexto_para_evaluacion(consulta: str) -> str:
 # AGENT RUNNER FACADE
 # ============================================================================
 
-async def run_evaluator_pipeline(rubric_text: str, document_text: str) -> str:
-    """Executes the evaluator agent pipeline using BeeAI and Groq."""
+async def run_evaluator_pipeline(rubric_text: str, document_text: str, llm_config: dict = None) -> str:
+    """Executes the evaluator agent pipeline using BeeAI."""
     _get_qdrant_service()
-    llm = _get_groq_llm()
+    llm = _get_llm(llm_config)
 
     logger.info("🤖 Starting Groq/BeeAI evaluator pipeline...")
 

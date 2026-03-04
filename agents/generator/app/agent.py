@@ -42,6 +42,7 @@ class RubricGeneratorAgent:
                     prompt=data.get("prompt", "Generar rúbrica"),
                     level=data.get("level", "avanzado"),
                     session_id=session_id or "default",
+                    llm_config=data.get("llm_config"),
                 )
         except (json.JSONDecodeError, TypeError):
             pass
@@ -55,7 +56,8 @@ class RubricGeneratorAgent:
         )
 
     def _invoke_with_document(
-        self, document_text: str, prompt: str, level: str, session_id: str
+        self, document_text: str, prompt: str, level: str, session_id: str,
+        llm_config: dict = None,
     ) -> str:
         """Runs the generator pipeline."""
         
@@ -70,11 +72,11 @@ class RubricGeneratorAgent:
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     result = pool.submit(
                         asyncio.run,
-                        run_generator_pipeline(document_text, prompt, level)
+                        run_generator_pipeline(document_text, prompt, level, llm_config)
                     ).result()
             except RuntimeError:
                 # No event loop running — safe to use asyncio.run()
-                result = asyncio.run(run_generator_pipeline(document_text, prompt, level))
+                result = asyncio.run(run_generator_pipeline(document_text, prompt, level, llm_config))
 
             if not result:
                 return "⚠️ El agente no generó una respuesta. Intente nuevamente."
