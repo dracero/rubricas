@@ -184,6 +184,29 @@ class RubricGeneratorAgent:
             
         return chunks
 
+    def _clear_qdrant(self):
+        """Clear all data from Qdrant collection before processing a new document."""
+        try:
+            from .adk_agents import _get_qdrant_service
+            qdrant = _get_qdrant_service()
+            
+            if qdrant.client:
+                # Delete and recreate the collection
+                try:
+                    qdrant.client.delete_collection(collection_name=qdrant.collection_name)
+                    logger.info(f"🗑️ Deleted Qdrant collection: {qdrant.collection_name}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not delete collection (may not exist): {e}")
+                
+                # Recreate the collection
+                qdrant._init_collection()
+                logger.info(f"✅ Qdrant collection cleared and ready for new document")
+            else:
+                logger.warning("⚠️ No Qdrant client available, skipping clear")
+        except Exception as e:
+            logger.error(f"❌ Error clearing Qdrant: {e}")
+            # Don't fail the whole process if clearing fails
+
     def _invoke_with_document(
         self, document_text: str, prompt: str, level: str, session_id: str
     ) -> str:
@@ -198,6 +221,9 @@ class RubricGeneratorAgent:
         Returns:
             Generated rubric as text.
         """
+        # Clear Qdrant before processing new document
+        self._clear_qdrant()
+        
         chunks = self._chunk_text(document_text)
         num_chunks = len(chunks)
         logger.info(f"📄 Processing document: {len(document_text)} chars, {num_chunks} chunks, level={level}")

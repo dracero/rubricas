@@ -19,18 +19,18 @@ graph TD
     classDef db fill:#e0e0e0,stroke:#616161,stroke-width:2px;
 
     User((👤 Usuario)):::user
-    Frontend[💻 Frontend A2UI<br>(React + Vite)]:::frontend
+    Frontend["💻 Frontend A2UI (React + Vite)"]:::frontend
     
     subgraph Host ["🌐 Host (Orquestador)"]
-        Router[🐝 BeeAI Router<br>(Orquestador Central)]:::orchestrator
-        A2A_Client[📡 Remote Agent Connection<br>(Cliente A2A)]:::orchestrator
+        Router["🔀 SimpleRouter (Orquestador Central)"]:::orchestrator
+        A2A_Client["📡 Remote Agent Connection (Cliente A2A)"]:::orchestrator
     end
 
     subgraph Agentes ["🤖 Red de Agentes (A2A Servers)"]
         direction TB
         
         subgraph GreeterPod ["👋 Greeter Agent"]
-            Greeter[Greeter<br>(LangGraph)]:::agent
+            Greeter["Greeter (LangGraph)"]:::agent
         end
 
         subgraph GeneratorPod ["📝 Generator Agent (Google ADK)"]
@@ -47,7 +47,7 @@ graph TD
     end
 
     subgraph Storage ["💾 Persistencia"]
-        Qdrant[(Qdrant<br>Vector DB)]:::db
+        Qdrant["Qdrant Vector DB"]:::db
     end
 
     %% Conexiones
@@ -68,10 +68,10 @@ graph TD
 
 ## 🤖 Descripción de los Agentes
 
-### 1. 🐝 BeeAI Router (Orquestador)
-*   **Tecnología**: [BeeAI Framework](https://github.com/i-am-bee/beeai-framework) + Google Gemini de orquestador.
+### 1. 🔀 SimpleRouter (Orquestador)
+*   **Tecnología**: Groq LLM (llama-3.3-70b-versatile) para clasificación de intenciones.
 *   **Rol**: Es el cerebro central del sistema. No realiza tareas por sí mismo, sino que analiza la intención del usuario y "enruta" la solicitud al agente especializado correspondiente.
-*   **Funcionamiento**: Utiliza un modelo ReAct para decidir qué herramienta (agente remoto) invocar basándose en la descripción semántica de cada agente.
+*   **Funcionamiento**: Utiliza un modelo LLM con temperatura baja para clasificar la consulta del usuario en una de tres categorías (generator/evaluator/greeter) y delega al agente apropiado.
 
 ### 2. 👋 Greeter Agent (Bienvenida)
 *   **Tecnología**: [LangGraph](https://langchain-ai.github.io/langgraph/).
