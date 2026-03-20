@@ -30,7 +30,7 @@ except ImportError:
     QdrantClient = None
     QDRANT_AVAILABLE = False
 
-from common.config import ConfiguracionColaba, traceable
+from common.config import ConfiguracionColaba, traceable, get_current_run_tree
 
 # Domain imports (data structures & constants)
 from .domain import (
@@ -180,6 +180,19 @@ class QdrantService:
 
         if points:
             try:
+                # Log metadata to LangSmith
+                run_tree = get_current_run_tree()
+                if run_tree:
+                    run_tree.extra = run_tree.extra or {}
+                    run_tree.extra.update({
+                        "qdrant_operation": "upsert",
+                        "collection_name": self.collection_name,
+                        "num_entities": len(ontologia.entidades),
+                        "num_relations": len(ontologia.relaciones),
+                        "num_points": len(points),
+                        "vector_dimension": 384,
+                    })
+                
                 self.client.upsert(
                     collection_name=self.collection_name,
                     points=points
@@ -188,6 +201,10 @@ class QdrantService:
                 return True
             except Exception as e:
                 logger.error(f"❌ Error saving to Qdrant: {e}")
+                # Log error to LangSmith
+                run_tree = get_current_run_tree()
+                if run_tree:
+                    run_tree.error = str(e)
                 return False
         return False
 
@@ -218,6 +235,22 @@ class QdrantService:
                 sum(r['score'] for r in resultados) / len(resultados)
                 if resultados else 0
             )
+            
+            # Log detailed search metadata to LangSmith
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.extra = run_tree.extra or {}
+                run_tree.extra.update({
+                    "qdrant_operation": "search",
+                    "collection_name": self.collection_name,
+                    "query": query[:100],  # Truncate for readability
+                    "limit": limit,
+                    "score_threshold": score_threshold,
+                    "num_results": len(resultados),
+                    "avg_score": round(avg_score, 3),
+                    "top_scores": [round(r['score'], 3) for r in resultados[:5]],
+                })
+            
             logger.info(
                 f"📊 Qdrant search: {len(resultados)} hits, "
                 f"avg_score: {avg_score:.3f}"
@@ -225,6 +258,10 @@ class QdrantService:
             return resultados
         except Exception as e:
             logger.error(f"⚠️ Qdrant search error: {e}")
+            # Log error to LangSmith
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.error = str(e)
             return []
 
 

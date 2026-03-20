@@ -72,6 +72,7 @@ class RubricGeneratorAgent:
             The final text response from the agent pipeline.
         """
         from google.genai import types
+        from common.config import get_current_run_tree
 
         # Create session if needed
         session = await self._session_service.get_session(
@@ -92,6 +93,11 @@ class RubricGeneratorAgent:
             parts=[types.Part.from_text(text=user_message)]
         )
 
+        # Track agent execution metadata
+        agent_steps = []
+        total_tokens = 0
+        llm_calls = 0
+
         # Run the agent and collect events
         final_response = ""
         async for event in self._runner.run_async(
@@ -99,13 +105,43 @@ class RubricGeneratorAgent:
             session_id=session.id,
             new_message=content,
         ):
-            # Collect text from agent responses
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        # Only keep the final agent response (last non-tool text)
-                        if event.content.role == "model":
-                            final_response = part.text
+            # Track agent steps and LLM interactions
+            if event.content:
+                llm_calls += 1
+                step_info = {
+                    "step": llm_calls,
+                    "role": event.content.role,
+                    "timestamp": event.timestamp if hasattr(event, 'timestamp') else None,
+                }
+                
+                # Estimate tokens (rough approximation)
+                if event.content.parts:
+                    for part in event.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            # Rough token estimation: ~4 chars per token
+                            estimated_tokens = len(part.text) // 4
+                            total_tokens += estimated_tokens
+                            step_info["estimated_tokens"] = estimated_tokens
+                            
+                            # Only keep the final agent response (last non-tool text)
+                            if event.content.role == "model":
+                                final_response = part.text
+                
+                agent_steps.append(step_info)
+
+        # Log comprehensive metadata to LangSmith
+        run_tree = get_current_run_tree()
+        if run_tree:
+            run_tree.extra = run_tree.extra or {}
+            run_tree.extra.update({
+                "agent_type": "ADK Multi-Agent",
+                "session_id": session_id,
+                "total_llm_calls": llm_calls,
+                "estimated_total_tokens": total_tokens,
+                "agent_steps": agent_steps,
+                "sub_agents": ["ontologo", "rubricador"],
+                "message_length": len(user_message),
+            })
 
         return final_response
 
