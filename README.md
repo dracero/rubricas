@@ -11,57 +11,57 @@ El sistema se compone de un Orquestador central y varios Agentes especializados 
 ```mermaid
 graph TD
     %% Estilos
-    classDef user fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
-    classDef orchestrator fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
-    classDef agent fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
-    classDef subagent fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px,stroke-dasharray: 5 5;
-    classDef db fill:#e0e0e0,stroke:#616161,stroke-width:2px;
+    classDef user fill:#f9f,stroke:#333,stroke-width:2px
+    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef orchestrator fill:#fff9c4,stroke:#fbc02d,stroke-width:2px
+    classDef agent fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef subagent fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px,stroke-dasharray: 5 5
+    classDef db fill:#e0e0e0,stroke:#616161,stroke-width:2px
 
-    User((👤 Usuario)):::user
-    Frontend[💻 Frontend A2UI<br>(React + Vite)]:::frontend
+    User((Usuario)):::user
+    Frontend["Frontend A2UI (React + Vite)"]:::frontend
     
-    subgraph Host ["🌐 Host (Orquestador)"]
-        Router[🐝 BeeAI Router<br>(Orquestador Central)]:::orchestrator
-        A2A_Client[📡 Remote Agent Connection<br>(Cliente A2A)]:::orchestrator
+    subgraph Host ["Host Orquestador"]
+        Router["BeeAI Router (Orquestador Central)"]:::orchestrator
+        A2A_Client["Remote Agent Connection (Cliente A2A)"]:::orchestrator
     end
 
-    subgraph Agentes ["🤖 Red de Agentes (A2A Servers)"]
+    subgraph Agentes ["Red de Agentes A2A Servers"]
         direction TB
         
-        subgraph GreeterPod ["👋 Greeter Agent"]
-            Greeter[Greeter<br>(LangGraph)]:::agent
+        subgraph GreeterPod ["Greeter Agent"]
+            Greeter["Greeter (LangGraph)"]:::agent
         end
 
-        subgraph GeneratorPod ["📝 Generator Agent (Google ADK)"]
-            GenRoot[Orquestador Generador]:::agent
-            Ontologo[Ontólogo]:::subagent
-            Rubricador[Rubricador]:::subagent
+        subgraph GeneratorPod ["Generator Agent Google ADK"]
+            GenRoot["Orquestador Generador"]:::agent
+            Ontologo["Ontologo"]:::subagent
+            Rubricador["Rubricador"]:::subagent
             GenRoot --> Ontologo
             GenRoot --> Rubricador
         end
 
-        subgraph EvaluatorPod ["⚖️ Evaluator Agent (Google ADK)"]
-            EvalRoot[Evaluador]:::agent
+        subgraph EvaluatorPod ["Evaluator Agent Google ADK"]
+            EvalRoot["Evaluador"]:::agent
         end
     end
 
-    subgraph Storage ["💾 Persistencia"]
-        Qdrant[(Qdrant<br>Vector DB)]:::db
+    subgraph Storage ["Persistencia"]
+        Qdrant[("Qdrant Vector DB")]:::db
     end
 
     %% Conexiones
-    User <-->|Chat / Acciones| Frontend
-    Frontend <-->|API / JSON| Router
+    User <-->|Chat y Acciones| Frontend
+    Frontend <-->|API JSON| Router
     Router -->|Ruteo Inteligente| A2A_Client
     
-    %% Conexiones A2A (HTTP / JSON-RPC)
-    A2A_Client <-->|A2A Protocol : message/send| Greeter
-    A2A_Client <-->|A2A Protocol : message/send| GenRoot
-    A2A_Client <-->|A2A Protocol : message/send| EvalRoot
+    %% Conexiones A2A
+    A2A_Client <-->|A2A Protocol| Greeter
+    A2A_Client <-->|A2A Protocol| GenRoot
+    A2A_Client <-->|A2A Protocol| EvalRoot
 
     %% Conexiones a Datos
-    Ontologo -->|Guarda Ontología| Qdrant
+    Ontologo -->|Guarda Ontologia| Qdrant
     Rubricador -->|Lee Contexto| Qdrant
     EvalRoot -->|Lee Contexto| Qdrant
 ```

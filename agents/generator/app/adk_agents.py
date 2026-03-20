@@ -114,6 +114,38 @@ class QdrantService:
         except Exception as e:
             logger.error(f"⚠️ Error initializing Qdrant: {e}")
 
+    def clear_collection(self):
+        """Delete and recreate the Qdrant collection to clear all data."""
+        if not self.client:
+            logger.warning("⚠️ No Qdrant client — skipping clear")
+            return False
+        try:
+            # Check if collection exists
+            collections = self.client.get_collections()
+            exists = any(
+                c.name == self.collection_name
+                for c in collections.collections
+            )
+            
+            if exists:
+                logger.info(f"🗑️ Deleting Qdrant collection: {self.collection_name}")
+                self.client.delete_collection(collection_name=self.collection_name)
+            
+            # Recreate the collection
+            logger.info(f"📦 Recreating Qdrant collection: {self.collection_name}")
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=qmodels.VectorParams(
+                    size=384,  # all-MiniLM-L6-v2
+                    distance=qmodels.Distance.COSINE
+                )
+            )
+            logger.info("✅ Qdrant collection cleared and recreated")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error clearing Qdrant collection: {e}")
+            return False
+
     def embed(self, text: str) -> List[float]:
         """Generate embedding vector for text."""
         return self.embedding_model.encode(text).tolist()

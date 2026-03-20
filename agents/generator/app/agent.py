@@ -153,8 +153,9 @@ class RubricGeneratorAgent:
         """Full ADK pipeline: sends document + prompt to the ADK multi-agent system.
 
         The root agent will:
-        1. Delegate to ontólogo → extracts ontology → saves to Qdrant
-        2. Delegate to rubricador → searches Qdrant → generates rubric
+        1. Clear the Qdrant database to start fresh
+        2. Delegate to ontólogo → extracts ontology → saves to Qdrant
+        3. Delegate to rubricador → searches Qdrant → generates rubric
 
         Args:
             document_text: Text extracted from the normative PDF
@@ -166,6 +167,14 @@ class RubricGeneratorAgent:
             Generated rubric as text
         """
         logger.info(f"📝 ADK pipeline: doc={len(document_text)} chars, level={level}")
+        
+        # Clear Qdrant database before processing new document
+        try:
+            from .adk_agents import _get_qdrant_service
+            qdrant_service = _get_qdrant_service()
+            qdrant_service.clear_collection()
+        except Exception as e:
+            logger.warning(f"⚠️ Could not clear Qdrant collection: {e}")
 
         # Build user message for the root agent
         user_message = (
