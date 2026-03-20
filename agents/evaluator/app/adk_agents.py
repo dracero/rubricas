@@ -174,7 +174,7 @@ def create_evaluator_agent() -> Agent:
     # --- Root Agent (Evaluator) ---
     evaluator_agent = Agent(
         name="evaluador_rubricas",
-        model="gemini-2.5-flash",
+        model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
         instruction=(
             "Eres un AUDITOR ACADÉMICO riguroso y experto en evaluación educativa.\n\n"
             "TU TAREA:\n"
@@ -196,7 +196,8 @@ def create_evaluator_agent() -> Agent:
             "REGLAS:\n"
             "- Sé objetivo y constructivo.\n"
             "- Si el documento del estudiante es muy corto o irrelevante, indícalo claramente.\n"
-            "- Basa tus juicios SOLO en la evidencia presentada y la rúbrica."
+            "- Basa tus juicios SOLO en la evidencia presentada y la rúbrica.\n"
+            "- REGLA DE ORO: Si vas a buscar contexto en Qdrant, tu respuesta debe ser únicamente la llamada a la herramienta. No des preámbulos ni explicaciones en ese turno."
         ),
         tools=[buscar_contexto_para_evaluacion],
     )

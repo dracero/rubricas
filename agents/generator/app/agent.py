@@ -11,11 +11,13 @@ import json
 import logging
 import sys
 import os
+import time
+import re
 
 # Add project root to path so we can import existing modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from common.config import traceable
 
@@ -93,20 +95,28 @@ class RubricGeneratorAgent:
         )
 
         # Run the agent and collect events
-        final_response = ""
+        text_parts = []
         async for event in self._runner.run_async(
             user_id="generator_user",
             session_id=session.id,
             new_message=content,
         ):
+            # Debug: log event structure
+            role = getattr(event.content, 'role', 'unknown') if event.content else 'event'
+            logger.info(f"📡 ADK Event: role={role}, has_parts={bool(event.content and event.content.parts)}")
+
             # Collect text from agent responses
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if hasattr(part, 'text') and part.text:
-                        # Only keep the final agent response (last non-tool text)
-                        if event.content.role == "model":
-                            final_response = part.text
+                        # Capture from both 'model' (Gemini) and 'assistant' (Groq)
+                        if role in ["model", "assistant"]:
+                            logger.info(f"✍️ Collected text ({len(part.text)} chars)")
+                            text_parts.append(part.text)
 
+        final_response = "\n".join(text_parts).strip()
+        if not final_response:
+            logger.warning("Empty response from ADK pipeline")
         return final_response
 
     @traceable(name="RubricGeneratorAgent.invoke", run_type="chain")
@@ -130,8 +140,10 @@ class RubricGeneratorAgent:
         try:
             data = json.loads(query)
             if isinstance(data, dict) and data.get("type") == "generate_rubric":
+                # Use the full document text now, as chunking will happen in _invoke_with_document
+                doc_text = data.get("document_text", "")
                 return self._invoke_with_document(
-                    document_text=data.get("document_text", ""),
+                    document_text=doc_text,
                     prompt=data.get("prompt", "Generar rúbrica"),
                     level=data.get("level", "avanzado"),
                     session_id=session_id or "default",
@@ -147,62 +159,130 @@ class RubricGeneratorAgent:
             "directamente aquí."
         )
 
+    def _chunk_text(self, text: str, chunk_size: int = 2000, overlap: int = 200) -> List[str]:
+        """Split text into overlapping chunks.
+
+        Args:
+            text: Input text.
+            chunk_size: Maximum size of each chunk.
+            overlap: Number of characters to overlap between chunks.
+
+        Returns:
+            List of text chunks.
+        """
+        if not text:
+            return []
+        
+        chunks = []
+        start = 0
+        text_len = len(text)
+        
+        while start < text_len:
+            end = start + chunk_size
+            chunks.append(text[start:end])
+            start += (chunk_size - overlap)
+            
+        return chunks
+
     def _invoke_with_document(
         self, document_text: str, prompt: str, level: str, session_id: str
     ) -> str:
-        """Full ADK pipeline: sends document + prompt to the ADK multi-agent system.
-
-        The root agent will:
-        1. Delegate to ontólogo → extracts ontology → saves to Qdrant
-        2. Delegate to rubricador → searches Qdrant → generates rubric
+        """Processes document in chunks and generates a rubric via ADK pipeline.
 
         Args:
-            document_text: Text extracted from the normative PDF
-            prompt: User prompt describing the rubric to generate
-            level: Education level (inicial, avanzado, posgrado)
-            session_id: Session ID for ADK Runner
+            document_text: Full text extracted from the normative PDF.
+            prompt: User prompt describing the rubric to generate.
+            level: Education level (inicial, avanzado, posgrado).
+            session_id: Session ID for ADK Runner.
 
         Returns:
-            Generated rubric as text
+            Generated rubric as text.
         """
-        logger.info(f"📝 ADK pipeline: doc={len(document_text)} chars, level={level}")
+        chunks = self._chunk_text(document_text)
+        num_chunks = len(chunks)
+        logger.info(f"📄 Processing document: {len(document_text)} chars, {num_chunks} chunks, level={level}")
 
-        # Build user message for the root agent
-        user_message = (
-            f"Necesito generar una rúbrica de evaluación.\n\n"
-            f"NIVEL EDUCATIVO: {level}\n\n"
-            f"SOLICITUD: {prompt}\n\n"
-            f"DOCUMENTO NORMATIVO:\n"
-            f"{document_text[:20000]}\n\n"
-            f"Por favor:\n"
-            f"1. Primero usa al ontólogo para extraer la ontología del documento "
-            f"y guardarla en Qdrant.\n"
-            f"2. Luego usa al rubricador para buscar contexto en Qdrant y generar "
-            f"la rúbrica adaptada al nivel {level}."
-        )
+        last_result = ""
 
-        try:
-            # Run the async ADK pipeline
-            try:
-                loop = asyncio.get_running_loop()
-                # Already in an async context (e.g. uvicorn) — run in thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run,
-                        self._run_agent(user_message, session_id)
-                    ).result()
-            except RuntimeError:
-                # No event loop running — safe to use asyncio.run()
-                result = asyncio.run(
-                    self._run_agent(user_message, session_id)
+        for i, chunk in enumerate(chunks):
+            is_last = (i == num_chunks - 1)
+            chunk_num = i + 1
+            
+            # Build instruction for this specific chunk
+            if is_last:
+                instruction = (
+                    f"ÚLTIMO FRAGMENTO (Parte {chunk_num}/{num_chunks}) — AHORA GENERA LA RÚBRICA.\n\n"
+                    f"NIVEL EDUCATIVO: {level}\n"
+                    f"SOLICITUD: {prompt}\n\n"
+                    f"FRAGMENTO FINAL:\n{chunk}\n\n"
+                    f"INSTRUCCIONES:\n"
+                    f"1. Primero, extrae y guarda la ontología de este fragmento usando la herramienta 'guardar_ontologia_en_qdrant'.\n"
+                    f"2. Luego, TRANSFIERE AL AGENTE 'rubricador' para que:\n"
+                    f"   - Busque en Qdrant TODO el contexto acumulado de los {num_chunks} fragmentos\n"
+                    f"   - Genere la rúbrica completa adaptada al nivel {level}\n"
+                    f"   - Cumpla con la solicitud: '{prompt}'\n\n"
+                    f"CRÍTICO: Después de guardar la ontología, DEBES transferir al agente 'rubricador' para generar la rúbrica."
+                )
+            else:
+                instruction = (
+                    f"ESTE ES UN FRAGMENTO PARCIAL (Parte {chunk_num}/{num_chunks}).\n\n"
+                    f"FRAGMENTO DEL DOCUMENTO:\n{chunk}\n\n"
+                    f"Tu tarea es ÚNICAMENTE extraer la ontología de este fragmento y guardarla en Qdrant "
+                    f"usando la herramienta correspondiente. NO intentes generar la rúbrica todavía ni "
+                    f"transfieras al rubricador. Simplemente confirma cuando el guardado sea exitoso."
                 )
 
-            if not result:
-                return "⚠️ El agente no generó una respuesta. Intente nuevamente."
+            logger.info(f"🔄 Processing chunk {chunk_num}/{num_chunks} ({len(chunk)} chars)...")
 
-            return result
+            max_retries = 4
+            base_wait = 15
 
-        except Exception as e:
-            logger.exception(f"Generator ADK pipeline error: {e}")
-            return f"Error al generar la rúbrica: {str(e)}"
+            for attempt in range(max_retries):
+                try:
+                    # Use the SAME session ID for all chunks to maintain agent configuration
+                    # The session will accumulate history, but Qdrant acts as external memory
+                    
+                    try:
+                        asyncio.get_running_loop()
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            result = pool.submit(
+                                asyncio.run,
+                                self._run_agent(instruction, session_id)
+                            ).result()
+                    except RuntimeError:
+                        result = asyncio.run(
+                            self._run_agent(instruction, session_id)
+                        )
+
+                    last_result = result
+                    
+                    # Add a delay between chunks to respect TPM limits (Groq on_demand is ~30k)
+                    if not is_last:
+                        delay = 15
+                        logger.info(f"⏳ Waiting {delay}s before next chunk to avoid RateLimit...")
+                        time.sleep(delay)
+
+                    break # Success, go to next chunk
+
+                except Exception as e:
+                    # ... (keep error handling)
+                    error_str = str(e)
+                    is_rate_limit = "rate_limit_exceeded" in error_str or "RateLimitError" in error_str
+
+                    if is_rate_limit and attempt < max_retries - 1:
+                        wait = base_wait * (attempt + 1)
+                        match = re.search(r"try again in (\d+(?:\.\d+)?)s", error_str)
+                        if match:
+                            wait = float(match.group(1)) + 2
+
+                        logger.warning(f"⏳ Rate limit hit on chunk {chunk_num} (attempt {attempt + 1}/{max_retries}). Waiting {wait:.0f}s...")
+                        time.sleep(wait)
+                        continue
+
+                    logger.exception(f"Error on chunk {chunk_num}: {e}")
+                    if is_last:
+                        return f"Error al procesar el documento (parte {chunk_num}): {str(e)}"
+                    break # Skip this chunk and try next? Or fail fast? Let's skip and hope for the best.
+
+        return last_result

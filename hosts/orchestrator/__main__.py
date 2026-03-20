@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from hosts.orchestrator.remote_agent_connection import RemoteAgentConnection
 from hosts.orchestrator.agent_tools import RemoteAgentTool
-from hosts.orchestrator.bee_router import BeeRouter
+from hosts.orchestrator.bee_router import SimpleRouter
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -73,7 +73,7 @@ app.add_middleware(
 # Global state
 # Global state
 agents: dict[str, RemoteAgentConnection] = {}
-router: BeeRouter | None = None
+router: SimpleRouter | None = None
 
 
 class ChatRequest(BaseModel):
@@ -130,9 +130,9 @@ async def discover_agents():
     """Discover all configured A2A agents."""
     global agents, router
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError("GOOGLE_API_KEY not set")
+        raise RuntimeError("GROQ_API_KEY not set")
 
     for name, url in AGENT_URLS.items():
         conn = RemoteAgentConnection(url)
@@ -162,8 +162,8 @@ async def discover_agents():
         logger.info(f"🛠️ Created tool: {tool.name}")
 
     if tools:
-        router = BeeRouter(tools=tools)
-        logger.info("🐝 BeeRouter initialized with BeeAI Framework")
+        router = SimpleRouter(tools=tools)
+        logger.info("🤖 SimpleRouter initialized with Groq LLM classification")
     else:
         logger.warning("⚠️ No tools created, router not initialized")
 
@@ -243,14 +243,14 @@ async def chat(request: ChatRequest):
 
     logger.info(f"📩 Chat received: {user_message[:80]}...")
 
-    # Step 1: Use BeeRouter to process the message via ReAct Agent
+    # Step 1: Use SimpleRouter to classify and route the message
     try:
         response_text = await router.route(user_message)
     except Exception as e:
         logger.error(f"❌ Router error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-    logger.info(f"🐝 BeeRouter response: {response_text[:100]}...")
+    logger.info(f"🤖 SimpleRouter response: {response_text[:100]}...")
 
     # Step 2: Check for action requests (Generator/Evaluator)
     if "ACTION:GENERATOR" in response_text:
@@ -264,7 +264,7 @@ async def chat(request: ChatRequest):
             metadata={
                 "component": "RubricGenerator",
                 "routed_to": "generator",
-                "framework": "beeai"
+                "framework": "simple_llm"
             },
         )
 
@@ -278,7 +278,7 @@ async def chat(request: ChatRequest):
             metadata={
                 "component": "RubricEvaluator",
                 "routed_to": "evaluator",
-                "framework": "beeai"
+                "framework": "simple_llm"
             },
         )
 
@@ -289,8 +289,8 @@ async def chat(request: ChatRequest):
         type="text",
         content=response_text,
         metadata={
-            "routed_to": "unknown", # BeeAI abstracts this
-            "framework": "beeai"
+            "routed_to": "unknown",
+            "framework": "simple_llm"
         },
     )
 

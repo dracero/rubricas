@@ -97,7 +97,7 @@ def setup_langsmith():
 class ConfiguracionColaba:
     def __init__(self):
         # Cargar desde variables de entorno (.env)
-        self.GOOGLE_API_KEY = get_env_var("GOOGLE_API_KEY")
+        self.GROQ_API_KEY = get_env_var("GROQ_API_KEY")
         self.QDRANT_URL = get_env_var("QDRANT_URL")
         self.QDRANT_API_KEY = get_env_var("QDRANT_API_KEY") or get_env_var("QDRANT_KEY")
         self.QDRANT_KEY = self.QDRANT_API_KEY # Alias for backward compatibility
@@ -106,8 +106,8 @@ class ConfiguracionColaba:
         self.EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
         
         # Validación
-        if not self.GOOGLE_API_KEY:
-            raise ValueError("❌ Falta GOOGLE_API_KEY. Verifique su archivo .env")
+        if not self.GROQ_API_KEY:
+            raise ValueError("❌ Falta GROQ_API_KEY. Verifique su archivo .env")
         if not self.QDRANT_URL:
             # Check for memory mode implied by local URL or empty
             pass

@@ -200,28 +200,25 @@ class QdrantService:
 # ADK TOOL FUNCTIONS
 # ============================================================================
 
-def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
-    """Parses an ontology JSON and saves entities/relations to the Qdrant vector database.
-
-    Use this tool after extracting entities and relations from a normative document.
-    The JSON must have the structure:
-    {
-        "entidades": [{"nombre": "...", "tipo": "...", "contexto": "...", "propiedades": {...}}],
-        "relaciones": [{"origen": "...", "destino": "...", "tipo": "...", "propiedades": {...}}]
-    }
+def guardar_ontologia_en_qdrant(entidades: List[Dict[str, Any]], relaciones: List[Dict[str, Any]] = None) -> str:
+    """Saves entities and relations extracted from a normative document to the Qdrant vector database.
 
     Args:
-        ontologia_json: JSON string with the extracted ontology (entidades + relaciones).
+        entidades: List of entities (concepts, criteria, requirements, roles).
+                  Each entity dict needs: nombre, tipo, contexto, propiedades.
+        relaciones: Optional list of relations between entities.
+                  Each relation dict needs: origen, destino, tipo, propiedades.
 
     Returns:
         A confirmation message with the number of entities and relations saved.
     """
     try:
-        data = parsear_json_con_fallback(ontologia_json)
+        if relaciones is None:
+            relaciones = []
 
-        entidades = []
-        for e in data.get("entidades", []):
-            entidades.append(Entidad(
+        entidades_obj = []
+        for e in entidades:
+            entidades_obj.append(Entidad(
                 nombre=e.get("nombre", "Desconocido"),
                 tipo=e.get("tipo", "Desconocido"),
                 propiedades=e.get("propiedades", {}),
@@ -229,9 +226,9 @@ def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
                 fecha_creacion=datetime.now().isoformat()
             ))
 
-        relaciones = []
-        for r in data.get("relaciones", []):
-            relaciones.append(Relacion(
+        relaciones_obj = []
+        for r in relaciones:
+            relaciones_obj.append(Relacion(
                 origen=r.get("origen", "Desconocido"),
                 destino=r.get("destino", "Desconocido"),
                 tipo=r.get("tipo", "Desconocido"),
@@ -239,8 +236,8 @@ def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
             ))
 
         ontologia = Ontologia(
-            entidades=entidades,
-            relaciones=relaciones,
+            entidades=entidades_obj,
+            relaciones=relaciones_obj,
             metadata={"source": "adk_ontologo"}
         )
 
@@ -248,6 +245,9 @@ def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
         success = qdrant.save_ontology(ontologia)
 
         if success:
+            import time
+            logger.info("⏳ Guardrail: Durmiendo 5 segundos para liberar TPM...")
+            time.sleep(5)  # Artificial delay to help with Groq TPM limits
             return (
                 f"✅ Ontología guardada exitosamente en Qdrant: "
                 f"{len(entidades)} entidades, {len(relaciones)} relaciones."
@@ -315,32 +315,20 @@ def create_generator_agent() -> Agent:
     # --- Sub-agent 1: Ontólogo ---
     ontologo_agent = Agent(
         name="ontologo",
-        model="gemini-2.5-flash",
+        model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
         instruction=(
-            "Eres un EXPERTO EN ONTOLOGÍAS EDUCATIVAS y análisis normativo.\n\n"
-            "Tu tarea es:\n"
-            "1. Analizar el texto normativo proporcionado por el usuario.\n"
-            "2. Extraer una ontología con ENTIDADES (conceptos, criterios, requisitos, roles) "
-            "y RELACIONES (REQUIERE, COMPLEMENTA, DEFINE, ES_PARTE_DE, REGULA).\n"
-            "3. Usar la herramienta `guardar_ontologia_en_qdrant` para persistir la ontología.\n\n"
-            "El JSON de ontología debe tener esta estructura:\n"
-            '{\n'
-            '  "entidades": [\n'
-            '    {"nombre": "id_unico", "tipo": "concepto|criterio|requisito|rol", '
-            '"contexto": "definición breve", "propiedades": {}}\n'
-            '  ],\n'
-            '  "relaciones": [\n'
-            '    {"origen": "id_1", "destino": "id_2", "tipo": "REQUIERE|ES_PARTE_DE|REGULA", '
-            '"propiedades": {}}\n'
-            '  ]\n'
-            '}\n\n'
-            "REGLAS:\n"
-            "- Extrae MÍNIMO 5 entidades por documento.\n"
-            "- Genera MÍNIMO 3 relaciones por entidad.\n"
-            "- Normaliza nombres en snake_case.\n"
-            "- Conecta densamente los conceptos.\n"
-            "- SIEMPRE usa la herramienta para guardar el resultado.\n"
-            "- Cuando termines, transfiere al agente `rubricador` para que genere la rúbrica."
+            "Eres un experto en ontologías educativas.\n\n"
+            "Tu tarea es analizar el fragmento de texto normativo que recibes y extraer "
+            "una ontología COMPACTA con las entidades y relaciones más importantes.\n\n"
+            "REGLAS ESTRICTAS:\n"
+            "- Extrae MÁXIMO 5 entidades por fragmento.\n"
+            "- Cada entidad tiene: nombre (snake_case), tipo, contexto (máx 80 chars), "
+            "propiedades (máx 2 claves simples, sin objetos anidados).\n"
+            "- Extrae MÁXIMO 5 relaciones totales.\n"
+            "- Cada relación tiene: origen, destino, tipo, propiedades ({}).\n"
+            "- Llama a `guardar_ontologia_en_qdrant` UNA SOLA VEZ con todo el resultado.\n"
+            "- NO generes texto explicativo. Solo llama a la herramienta y confirma.\n"
+            "- NO transfieras al rubricador. Solo guarda y termina."
         ),
         tools=[guardar_ontologia_en_qdrant],
     )
@@ -348,25 +336,21 @@ def create_generator_agent() -> Agent:
     # --- Sub-agent 2: Rubricador ---
     rubricador_agent = Agent(
         name="rubricador",
-        model="gemini-2.5-flash",
+        model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
         instruction=(
-            "Eres un ARQUITECTO PEDAGÓGICO experto en diseño de instrumentos de evaluación.\n\n"
-            "Tu tarea es:\n"
-            "1. Usar la herramienta `buscar_contexto_qdrant` para obtener contexto normativo "
-            "relevante de la base de conocimiento.\n"
-            "2. Generar una RÚBRICA DE EVALUACIÓN detallada basada en ese contexto.\n\n"
-            "ESTRUCTURA OBLIGATORIA de la rúbrica:\n"
-            "1. INFORMACIÓN GENERAL (Materia, Nivel, Objetivos)\n"
-            "2. COMPETENCIAS A EVALUAR (Cognitivas, Procedimentales, Actitudinales)\n"
-            "3. MATRIZ DE EVALUACIÓN (Dimensiones, Criterios, Escala 1-4, Evidencias observables)\n"
-            "4. NIVELES DE DOMINIO con ejemplos específicos\n"
-            "5. RECOMENDACIONES AL ESTUDIANTE\n\n"
-            "REGLAS CRÍTICAS:\n"
-            "- NO uses términos vagos como 'efectivo' o 'adecuado' sin definirlos.\n"
-            "- Cada criterio debe tener EVIDENCIAS OBSERVABLES.\n"
-            "- Incluye REQUISITOS MÍNIMOS concretos para aprobar.\n"
-            "- Usa formato Markdown.\n"
-            "- SIEMPRE busca contexto en Qdrant ANTES de generar la rúbrica."
+            "Eres un experto en diseño de instrumentos de evaluación académica.\n\n"
+            "Tu tarea:\n"
+            "1. Llama a `buscar_contexto_qdrant` con una consulta relevante para obtener "
+            "el contexto normativo acumulado.\n"
+            "2. Genera una RÚBRICA DE EVALUACIÓN en Markdown con:\n"
+            "   - Información general (materia, nivel, objetivos)\n"
+            "   - Matriz de evaluación (criterios, escala 1-4, evidencias observables)\n"
+            "   - Niveles de dominio con ejemplos\n"
+            "   - Requisitos mínimos para aprobar\n\n"
+            "REGLAS:\n"
+            "- Busca contexto ANTES de generar. Solo una llamada a la herramienta.\n"
+            "- Sé concreto. Evita términos vagos sin definición.\n"
+            "- Responde solo en español."
         ),
         tools=[buscar_contexto_qdrant],
     )
@@ -374,22 +358,16 @@ def create_generator_agent() -> Agent:
     # --- Root Agent (Orchestrator) ---
     root_agent = Agent(
         name="generador_rubricas",
-        model="gemini-2.5-flash",
+        model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
         instruction=(
-            "Eres el orquestador del sistema de generación de rúbricas académicas.\n\n"
-            "Tu flujo de trabajo es:\n"
-            "1. Si el usuario proporciona un documento normativo, transfiere al agente "
-            "`ontologo` para que extraiga la ontología y la guarde en Qdrant.\n"
-            "2. Luego transfiere al agente `rubricador` para que busque contexto en Qdrant "
-            "y genere la rúbrica detallada.\n"
-            "3. Si el usuario solo pide una rúbrica sin documento, transfiere directamente "
-            "al `rubricador` para que use el contexto ya existente en Qdrant.\n\n"
-            "IMPORTANTE:\n"
-            "- Siempre responde en español.\n"
-            "- Si se indica un nivel educativo (inicial, avanzado, posgrado), "
-            "inclúyelo en la solicitud al rubricador.\n"
-            "- No generes la rúbrica tú mismo, delega siempre al rubricador."
+            "Eres el orquestador del sistema de generación de rúbricas.\n\n"
+            "Flujo:\n"
+            "1. Si hay un fragmento de documento normativo → transfiere al agente `ontologo`.\n"
+            "2. Si es el último fragmento o no hay documento → transfiere al `rubricador`.\n"
+            "3. Si el usuario solo pide una rúbrica sin documento → transfiere al `rubricador`.\n\n"
+            "Responde siempre en español. No generes la rúbrica tú mismo."
         ),
+        tools=[guardar_ontologia_en_qdrant, buscar_contexto_qdrant],
         sub_agents=[ontologo_agent, rubricador_agent],
     )
 

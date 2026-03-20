@@ -12,7 +12,7 @@ import operator
 try:
     from langgraph.graph import StateGraph, END, START
     from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_groq import ChatGroq
     from langchain_core.prompts import ChatPromptTemplate
     LANGGRAPH_AVAILABLE = True
 except ImportError:
@@ -28,7 +28,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
 
 
-def generate_greeting(state: AgentState, model: ChatGoogleGenerativeAI):
+def generate_greeting(state: AgentState, model: ChatGroq):
     """Node that generates a greeting response."""
     messages = state['messages']
     last_message = messages[-1].content if messages else ""
@@ -73,9 +73,9 @@ class GreetingAgent:
         logger.info("🔧 Initializing Greeter LangGraph...")
 
         # Initialize LLM
-        model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=self.api_key,
+        model = ChatGroq(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            api_key=self.api_key,
             temperature=0.7,
         )
 
@@ -99,7 +99,9 @@ class GreetingAgent:
 
         logger.info(f"🤖 Greeter processing: {query[:80]}...")
         
-        inputs = {"messages": [HumanMessage(content=query)]}
+        # Guardrail: Truncate query to 2,000 chars for Greeter
+        truncated_query = query[:2000]
+        inputs = {"messages": [HumanMessage(content=truncated_query)]}
         result = self.app.invoke(inputs)
         
         # Extract the last message content

@@ -10,6 +10,8 @@ import json
 import logging
 import sys
 import os
+import time
+import re
 
 from typing import Any, Dict
 
@@ -93,19 +95,29 @@ class RubricEvaluatorAgent:
         )
 
         # Run the agent and collect events
-        final_response = ""
+        text_parts = []
         async for event in self._runner.run_async(
             user_id="evaluator_user",
             session_id=session.id,
             new_message=content,
         ):
+            # Debug: log event structure
+            role = getattr(event.content, 'role', 'unknown') if event.content else 'event'
+            logger.info(f"📡 ADK Evaluator Event: role={role}, has_parts={bool(event.content and event.content.parts)}")
+
             # Collect text from agent responses
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if hasattr(part, 'text') and part.text:
-                        # Only keep the final agent response (last non-tool text)
-                        if event.content.role == "model":
-                            final_response = part.text
+                        # Capture from both 'model' (Gemini) and 'assistant' (Groq)
+                        if role in ["model", "assistant"]:
+                            logger.info(f"✍️ Collected evaluator text ({len(part.text)} chars)")
+                            text_parts.append(part.text)
+
+        final_response = "\n".join(text_parts).strip()
+        if not final_response:
+            logger.warning("Empty response from ADK Evaluator pipeline")
+        return final_response
 
         return final_response
 
@@ -130,9 +142,13 @@ class RubricEvaluatorAgent:
         try:
             data = json.loads(query)
             if isinstance(data, dict) and data.get("type") == "evaluate_document":
+                # Truncate to stay under TPM
+                # 10k doc + 5k rubric ~ 4k tokens. Safe for 8,000 TPM limit.
+                doc_text = data.get("document_text", "")[:10000]
+                rub_text = data.get("rubric_text", "")[:5000]
                 return self._invoke_with_data(
-                    rubric_text=data.get("rubric_text", ""),
-                    document_text=data.get("document_text", ""),
+                    document_text=doc_text,
+                    rubric_text=rub_text,
                     session_id=session_id or "default",
                 )
         except (json.JSONDecodeError, TypeError):
@@ -149,38 +165,52 @@ class RubricEvaluatorAgent:
         user_message = (
             f"Por favor evalúa el siguiente documento usando la rúbrica proporcionada.\n\n"
             f"RÚBRICA DE REFERENCIA:\n"
-            f"{rubric_text[:10000]}\n\n"
+            f"{rubric_text[:3000]}\n\n"
             f"DOCUMENTO DEL ESTUDIANTE:\n"
-            f"{document_text[:20000]}\n\n"
+            f"{document_text[:5000]}\n\n"
             f"Instrucciones adicionales: Busca contexto normativo en Qdrant si es necesario "
             f"para validar los criterios de la rúbrica."
         )
 
-        try:
-            # Run the async ADK pipeline
+        max_retries = 4
+        base_wait = 15  # seconds
+
+        for attempt in range(max_retries):
             try:
-                loop = asyncio.get_running_loop()
-                # Already in an async context (e.g. uvicorn) — run in thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run,
+                try:
+                    asyncio.get_running_loop()
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        result = pool.submit(
+                            asyncio.run,
+                            self._run_agent(user_message, session_id)
+                        ).result()
+                except RuntimeError:
+                    result = asyncio.run(
                         self._run_agent(user_message, session_id)
-                    ).result()
-            except RuntimeError:
-                # No event loop running — safe to use asyncio.run()
-                result = asyncio.run(
-                    self._run_agent(user_message, session_id)
-                )
+                    )
 
-            if not result:
-                return "⚠️ El agente no generó una respuesta. Intente nuevamente."
+                if not result:
+                    return "⚠️ El agente no generó una respuesta. Intente nuevamente."
 
-            return result
+                return result
 
-        except Exception as e:
-            logger.exception(f"Evaluator ADK pipeline error: {e}")
-            return f"Error al evaluar el documento: {str(e)}"
+            except Exception as e:
+                error_str = str(e)
+                is_rate_limit = "rate_limit_exceeded" in error_str or "RateLimitError" in error_str
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    wait = base_wait * (attempt + 1)
+                    match = re.search(r"try again in (\d+(?:\.\d+)?)s", error_str)
+                    if match:
+                        wait = float(match.group(1)) + 2
+
+                    logger.warning(f"⏳ Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait:.0f}s...")
+                    time.sleep(wait)
+                    continue
+
+                logger.exception(f"Evaluator ADK pipeline error: {e}")
+                return f"Error al evaluar el documento: {str(e)}"
 
     def _evaluate_text_query(self, query: str) -> str:
         """Handle a plain text evaluation query (fallback)."""

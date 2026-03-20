@@ -1,20 +1,11 @@
-"""BeeAI Router Implementation using ReAct Agent."""
+"""Simple LLM Router using Groq for classification."""
 
 import os
 import logging
 from typing import List, Optional
 
-from beeai_framework.agents.react import ReActAgent
-from beeai_framework.adapters.gemini import GeminiChatModel
-from beeai_framework.memory import UnconstrainedMemory
 from hosts.orchestrator.agent_tools import RemoteAgentTool
-from beeai_framework.agents.react.runners.default.runner import DefaultRunner
-from beeai_framework.parsers.line_prefix import LinePrefixParser, LinePrefixParserNode, LinePrefixParserOptions
-from beeai_framework.parsers.field import ParserField
-from beeai_framework.utils.strings import create_strenum
-from beeai_framework.agents.react.runners.base import BaseRunner
-from functools import cached_property
-from typing import Callable, Any
+
 try:
     from langsmith import traceable
 except ImportError:
@@ -23,143 +14,137 @@ except ImportError:
             return func
         return decorator
 
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
-class GeminiRunner(DefaultRunner):
-    def _create_parser(self) -> LinePrefixParser:
-        tool_names = create_strenum("ToolsEnum", [tool.name for tool in self._input.tools])
 
-        return LinePrefixParser(
-            nodes={
-                "thought": LinePrefixParserNode(
-                    prefix="Thought: ",
-                    field=ParserField.from_type(str),
-                    is_start=True,
-                    next=["tool_name", "final_answer"],
-                ),
-                "tool_name": LinePrefixParserNode(
-                    prefix="Function Name: ",
-                    field=ParserField.from_type(tool_names, trim=True),
-                    is_start=True, # Allow starting with Function Name
-                    next=["tool_input"],
-                ),
-                "tool_input": LinePrefixParserNode(
-                    prefix="Function Input: ",
-                    field=ParserField.from_type(dict, trim=True),
-                    next=["tool_output"],
-                    is_end=True,
-                ),
-                "tool_output": LinePrefixParserNode(
-                    prefix="Function Output: ", field=ParserField.from_type(str), is_end=True, next=["final_answer"]
-                ),
-                "final_answer": LinePrefixParserNode(
-                    prefix="Final Answer: ", field=ParserField.from_type(str), is_end=True, is_start=True
-                ),
-            },
-            options=LinePrefixParserOptions(
-                wait_for_start_node=True, # Still wait for a valid start node (Thought, Function Name, or Final Answer)
-                end_on_repeat=True,
-                fallback=lambda value: [
-                    {"key": "thought", "value": "I now know the final answer."},
-                    {"key": "final_answer", "value": value},
-                ]
-                if value
-                else [],
-            ),
-        )
-
-class GeminiReActAgent(ReActAgent):
-    @cached_property
-    def _runner(self) -> Callable[..., BaseRunner]:
-        return GeminiRunner
-
-class BeeRouter:
-    """Orchestrator router using BeeAI Framework."""
+class SimpleRouter:
+    """Simple orchestrator router using Groq LLM for classification."""
     
-    def __init__(self, tools: List[RemoteAgentTool], model_name: str = "gemini-2.5-flash"):
+    def __init__(self, tools: List[RemoteAgentTool], model_name: Optional[str] = None):
         """Initialize the router with tools and LLM."""
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        self.tools = {tool.name: tool for tool in tools}
+        self.model_name = model_name or os.environ.get("ORCHESTRATOR_MODEL", "llama-3.3-70b-versatile")
+        
+        api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            logger.warning("⚠️ GOOGLE_API_KEY not found in environment variables")
+            logger.warning("⚠️ GROQ_API_KEY not found, falling back to keyword matching")
+            self.client = None
+        elif not GROQ_AVAILABLE:
+            logger.warning("⚠️ groq package not installed, falling back to keyword matching")
+            self.client = None
+        else:
+            self.client = Groq(api_key=api_key)
         
-        self.llm = GeminiChatModel(
-            model_id=model_name,
-            api_key=api_key,
-        )
-        self.memory = UnconstrainedMemory()
-        
-        self.agent = GeminiReActAgent(
-            llm=self.llm,
-            tools=tools,
-            memory=self.memory,
-        )
+        logger.info(f"✅ SimpleRouter initialized with tools: {list(self.tools.keys())}")
 
-    @traceable(name="BeeRouter.route", run_type="chain")
+    @traceable(name="SimpleRouter.route", run_type="chain")
     async def route(self, user_message: str) -> str:
-        """Route the user message to the appropriate agent via BeeAI."""
+        """Route the user message to the appropriate agent via LLM classification."""
         try:
-            # Initialize system prompt if memory is empty
-            if not self.memory.messages:
-                from beeai_framework.backend.message import SystemMessage
-                await self.memory.add(SystemMessage(content="""Eres el Orquestador del Sistema de Rúbricas.
-            Tu objetivo es usar las herramientas disponibles para responder al usuario.
+            # Use LLM to classify the intent
+            if self.client:
+                classification = await self._classify_with_llm(user_message)
+            else:
+                classification = self._classify_with_keywords(user_message)
             
-            HERRAMIENTAS:
-            - 'greeting_tool': Para saludos.
-            - 'generator_tool': Para generar rúbricas.
-            - 'evaluator_tool': Para evaluar documentos.
-
-            INSTRUCCIONES CLAVE DE FORMATO:
-            Tu respuesta DEBE seguir estrictamente el formato ReAct.
-            1. SIEMPRE empieza con "Thought: " explicando tu razonamiento en una línea.
-            2. Inmediatamente después, si necesitas usar una herramienta, pon "Function Name: " y "Function Input: ".
+            logger.info(f"🎯 Classification: {classification}")
             
-            EJEMPLO CORRECTO:
-            Thought: El usuario está saludando, debo usar la herramienta de saludos.
-            Function Name: greeting_tool
-            Function Input: {"query": "Hola"}
+            # Route based on classification
+            if classification == "evaluator":
+                tool = self.tools.get("evaluator_tool")
+                if tool:
+                    result = await tool.run(user_message)
+                    return f"ACTION:EVALUATOR {result}"
+                return "Error: evaluator_tool no disponible"
             
-            NO omitas nunca la línea "Thought: ".
+            elif classification == "generator":
+                tool = self.tools.get("generator_tool")
+                if tool:
+                    result = await tool.run(user_message)
+                    return f"ACTION:GENERATOR {result}"
+                return "Error: generator_tool no disponible"
             
-            IMPORTANTE SOBRE GENERATOR Y EVALUATOR:
-            - Si decidiste usar 'generator_tool', tu respuesta FINAL DEBE EMPEZAR con "ACTION:GENERATOR ".
-              INCLUSO si la herramienta te devuelve una pregunta o pide más datos, tu respuesta al usuario DEBE empezar con "ACTION:GENERATOR " seguido del texto de la herramienta.
-              Ejemplo: "ACTION:GENERATOR ¿Para qué nivel educativo necesitas la rúbrica?"
-            
-            - Si decidiste usar 'evaluator_tool', tu respuesta FINAL DEBE EMPEZAR con "ACTION:EVALUATOR ".
-              INCLUSO si la herramienta pide el documento, tu respuesta al usuario DEBE empezar con "ACTION:EVALUATOR " seguido del texto.
-              Ejemplo: "ACTION:EVALUATOR Por favor sube el documento que deseas evaluar."
-            """))
-
-            logger.info(f"🐝 BeeRouter processing: {user_message[:50]}...")
-            response = await self.agent.run(user_message)
-            
-            # Extract text from ReActAgentResponse
-            
-            # Extract text from ReActAgentResponse
-            if hasattr(response, 'result') and hasattr(response.result, 'text'):
-                return response.result.text
-            elif hasattr(response, 'last_message') and response.last_message:
-                content = response.last_message.content
-                if isinstance(content, list):
-                    return "".join([c.text for c in content if hasattr(c, "text")])
-                return str(content)
-            
-            return str(response)
+            else:  # greeter
+                tool = self.tools.get("greeter_tool")
+                if tool:
+                    result = await tool.run(user_message)
+                    return result  # Sin prefijo ACTION:GREETER
+                return "Error: greeter_tool no disponible"
 
         except Exception as e:
-            # Check for ChatModelError and unwrap it
-            error_msg = str(e)
-            cause = getattr(e, "__cause__", None) or e
-            cause_msg = str(cause)
+            logger.exception(f"❌ SimpleRouter error: {e}")
+            return f"Hubo un error en el orquestador: {str(e)}"
+
+    async def _classify_with_llm(self, user_message: str) -> str:
+        """Classify user intent using Groq LLM."""
+        prompt = f"""Clasifica la siguiente solicitud del usuario en UNA de estas categorías:
+
+- generator: Si el usuario quiere CREAR, GENERAR o DISEÑAR una rúbrica
+- evaluator: Si el usuario quiere EVALUAR, CALIFICAR o REVISAR un documento
+- greeter: Si es un saludo, pregunta general, o no está claro
+
+Solicitud del usuario: "{user_message}"
+
+Responde SOLO con una palabra: generator, evaluator, o greeter"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=10,
+            )
             
-            if "429" in error_msg or "Quota exceeded" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or \
-               "429" in cause_msg or "Quota exceeded" in cause_msg or "RESOURCE_EXHAUSTED" in cause_msg:
-                logger.warning(f"⚠️ Gemini Rate Limit: {cause_msg}")
-                return "El sistema está recibiendo muchas solicitudes en este momento (Límite de cuota Gemini). Por favor, intenta de nuevo en un minuto."
+            classification = response.choices[0].message.content.strip().lower()
             
-            logger.error(f"❌ BeeRouter error: {e}")
-            if cause:
-                logger.error(f"   Caused by: {cause}")
-                
-            return f"Hubo un error en el orquestador inteligente: {error_msg}"
+            # Validate response
+            if classification in ["generator", "evaluator", "greeter"]:
+                return classification
+            
+            # Fallback if LLM returns something unexpected
+            logger.warning(f"⚠️ Unexpected LLM response: {classification}, using keyword fallback")
+            return self._classify_with_keywords(user_message)
+            
+        except Exception as e:
+            logger.error(f"❌ LLM classification error: {e}, using keyword fallback")
+            return self._classify_with_keywords(user_message)
+
+    def _classify_with_keywords(self, user_message: str) -> str:
+        """Fallback classification using keyword matching."""
+        import re
+        message_lower = user_message.lower()
+        
+        # Keywords for each category
+        generator_keywords = [
+            r'\bgenerar\b', r'\bcrear\b', r'\bdiseñar\b', r'\brúbrica\b',
+            r'\brubrica\b', r'\bnueva\b', r'\bhacer\b', r'\bconstruir\b'
+        ]
+        
+        evaluator_keywords = [
+            r'\bevaluar\b', r'\bcalificar\b', r'\brevisar\b', r'\banalizar\b',
+            r'\bcorregir\b', r'\bpuntuar\b'
+        ]
+        
+        greeter_keywords = [
+            r'\bhola\b', r'\bhi\b', r'\bhello\b', r'\bbuenas\b', 
+            r'\bqué tal\b', r'\bayuda\b', r'\bhelp\b'
+        ]
+        
+        # Check for matches
+        generator_match = any(re.search(pattern, message_lower) for pattern in generator_keywords)
+        evaluator_match = any(re.search(pattern, message_lower) for pattern in evaluator_keywords)
+        greeter_match = any(re.search(pattern, message_lower) for pattern in greeter_keywords)
+        
+        # Priority: evaluator > generator > greeter
+        if evaluator_match and not generator_match:
+            return "evaluator"
+        elif generator_match:
+            return "generator"
+        else:
+            return "greeter"
