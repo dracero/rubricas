@@ -143,12 +143,7 @@ def setup_langsmith():
 
         # Configurar OpenTelemetry con instrumentación completa
         if configure_langsmith_otel:
-            configure_langsmith_otel(
-                project_name=project_name,
-                # Capturar toda la información posible
-                export_traces=True,
-                export_metrics=True,
-            )
+            configure_langsmith_otel(project_name=project_name)
         
         # Inicializar cliente LangSmith para logging adicional
         if Client:
