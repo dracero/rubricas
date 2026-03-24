@@ -168,9 +168,6 @@ class ConfiguracionColaba:
         self.QDRANT_API_KEY = get_env_var("QDRANT_API_KEY") or get_env_var("QDRANT_KEY")
         self.QDRANT_KEY = self.QDRANT_API_KEY # Alias for backward compatibility
         
-        # Modelo de Embeddings
-        self.EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-        
         # Validación
         if not self.GOOGLE_API_KEY:
             raise ValueError("❌ Falta GOOGLE_API_KEY. Verifique su archivo .env")

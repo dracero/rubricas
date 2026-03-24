@@ -3,38 +3,30 @@
 # Función para cerrar todos los procesos hijos al presionar Ctrl+C
 cleanup() {
     echo "🛑 Cerrando todos los servicios..."
-    # Mata todos los procesos en segundo plano (jobs) del script actual
     kill $(jobs -p) 2>/dev/null
     exit
 }
 
-# Capturamos las señales de interrupción para ejecutar el cleanup
 trap cleanup SIGINT SIGTERM
 
 echo "========================================="
-echo "🚀 Iniciando Sistema Multi-Agente RubricAI"
+echo "🚀 Iniciando RubricAI (Skills Architecture)"
 echo "========================================="
 
-echo "🤖 1/3 Iniciando Agentes (Generador, Evaluador, Greeter, Corrector)..."
-(cd agents/generator && uv run python -m app --port 10001) &
-(cd agents/evaluator && uv run python -m app --port 10002) &
-(cd agents/greeter && uv run python -m app --port 10003) &
-(cd agents/corrector && uv run python -m app --port 10005) &
+echo "🧠 1/2 Iniciando Servidor Backend (Agente + Skills)..."
+uv run python -m app.server &
 
-echo "⏳ Esperando 10 segundos para asegurar que todos los agentes estén escuchando..."
-sleep 10
-
-echo "🧠 2/3 Iniciando Orquestador Central..."
-uv run python -m hosts.orchestrator &
-
-echo "⏳ Esperando 5 segundos para que el Orquestador descubra los agentes e inicie la API..."
+echo "⏳ Esperando 5 segundos para que el servidor arranque..."
 sleep 5
 
-echo "💻 3/3 Iniciando Frontend interactivo..."
+echo "💻 2/2 Iniciando Frontend interactivo..."
 (cd frontend && npm run dev) &
 
 echo "✅ Todos los servicios han sido iniciados."
-echo "Presiona Ctrl+C para detener todo el sistema de una sola vez."
+echo "   - Backend: http://localhost:8000"
+echo "   - Frontend: http://localhost:5173"
+echo ""
+echo "📂 Skills cargados desde: ./skills/"
+echo "Presiona Ctrl+C para detener todo el sistema."
 
-# Mantenemos el script en ejecución observando los procesos de fondo
 wait
