@@ -263,15 +263,28 @@ async def chat(request: ChatRequest):
     response_type = "text"
     metadata = {"architecture": "skills"}
 
-    if _needs_generator_action(user_message, response_text):
+    # explicitly check for UI tags
+    if "[UI:RubricGenerator]" in response_text:
         response_type = "action_request"
         metadata["component"] = "RubricGenerator"
         metadata["routed_to"] = "generator"
-
-    elif _needs_evaluator_action(user_message, response_text):
+        response_text = response_text.replace("[UI:RubricGenerator]", "").strip()
+    elif "[UI:RubricEvaluator]" in response_text:
         response_type = "action_request"
         metadata["component"] = "RubricEvaluator"
         metadata["routed_to"] = "evaluator"
+        response_text = response_text.replace("[UI:RubricEvaluator]", "").strip()
+
+    # Fallback to heuristic keywords if tag is missing
+    if response_type == "text":
+        if _needs_generator_action(user_message, response_text):
+            response_type = "action_request"
+            metadata["component"] = "RubricGenerator"
+            metadata["routed_to"] = "generator"
+        elif _needs_evaluator_action(user_message, response_text):
+            response_type = "action_request"
+            metadata["component"] = "RubricEvaluator"
+            metadata["routed_to"] = "evaluator"
 
     return ChatResponse(
         source="orchestrator",
