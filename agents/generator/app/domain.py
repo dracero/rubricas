@@ -168,34 +168,34 @@ def llamar_llm_con_retry(func, prompt_for_cache=None, max_intentos=3):
 # CONSTANTES
 # ============================================================================
 
-IEEE_LOM_CONTEXTS = {
-    "school": "Educación escolar (primaria/secundaria)",
-    "higher education": "Educación superior universitaria",
-    "training": "Formación profesional/capacitación",
-    "other": "Otro contexto educativo"
+COMPLIANCE_CONTEXTS = {
+    "operacional": "Cumplimiento operacional interno",
+    "técnico": "Normativas técnicas o estándares industriales",
+    "legal": "Marco legal, regulatorio y contractual",
+    "estatutario": "Estatutos y reglamentos institucionales"
 }
 
-NIVELES_ESTUDIANTE = {
+NIVELES_EXIGENCIA = {
     "inicial": {
-        "nombre": "Primer Año Universitario",
-        "max_criterios": 5,
-        "lenguaje": "simple y directo, evitando jerga técnica innecesaria",
+        "nombre": "Cumplimiento Operacional (Básico)",
+        "max_criterios": 6,
+        "lenguaje": "directo, enfocado en procesos inmediatos",
         "ejemplos_requeridos": True,
-        "descripcion": "Rúbrica simplificada con criterios básicos y claros"
+        "descripcion": "Rúbrica para verificación rápida de procesos operativos"
     },
     "avanzado": {
-        "nombre": "Estudiante Avanzado (3°-5° año)",
+        "nombre": "Nivel Técnico/Regulatorio (Intermedio)",
         "max_criterios": 12,
-        "lenguaje": "técnico-académico apropiado para el nivel",
+        "lenguaje": "técnico preciso, alineado con estándares",
         "ejemplos_requeridos": True,
-        "descripcion": "Rúbrica intermedia con criterios detallados"
+        "descripcion": "Rúbrica para auditoría de cumplimiento técnico o normativo"
     },
-    "posgrado": {
-        "nombre": "Posgrado/Investigación",
+    "critico": {
+        "nombre": "Auditoría de Alta Criticidad (Legal/Estratégico)",
         "max_criterios": 20,
-        "lenguaje": "especializado y preciso",
+        "lenguaje": "formal, legalmente vinculante y riguroso",
         "ejemplos_requeridos": False,
-        "descripcion": "Rúbrica exhaustiva con todos los criterios"
+        "descripcion": "Rúbrica exhaustiva para cumplimiento legal o de alta seguridad"
     }
 }
 

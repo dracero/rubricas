@@ -31,7 +31,7 @@ def main(host, port):
         id="rubric_generator",
         name="Generador de Rúbricas",
         description=(
-            "Genera rúbricas académicas detalladas basadas en normativas educativas. "
+            "Genera rúbricas de cumplimiento normativo detalladas basadas en regulaciones específicas. "
             "Usa RAG con Qdrant para consultar documentos normativos y genera "
             "rúbricas con criterios, niveles de logro e indicadores observables."
         ),
@@ -41,12 +41,12 @@ def main(host, port):
             "rubric",
             "normativa",
             "criterios",
-            "evaluación académica",
+            "evaluación normativa",
         ],
         examples=[
             "Generá una rúbrica para evaluar trabajos de investigación",
             "Necesito una rúbrica para presentaciones orales",
-            "Crear rúbrica de evaluación para un ensayo académico",
+            "Crear rúbrica de evaluación para un documento normativo",
         ],
     )
 
@@ -55,7 +55,7 @@ def main(host, port):
     agent_card = AgentCard(
         name="Generador de Rúbricas - RubricAI",
         description=(
-            "Genera rúbricas académicas detalladas usando IA y normativas educativas "
+            "Genera rúbricas de cumplimiento normativo detalladas usando IA y regulaciones "
             "almacenadas en Qdrant. Incluye criterios, niveles de logro, indicadores "
             "observables y requisitos mínimos de calidad."
         ),

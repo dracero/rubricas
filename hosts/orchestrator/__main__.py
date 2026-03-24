@@ -44,6 +44,7 @@ AGENT_URLS = {
     "generator": os.getenv("GENERATOR_URL", "http://localhost:10001"),
     "evaluator": os.getenv("EVALUATOR_URL", "http://localhost:10002"),
     "greeter": os.getenv("GREETER_URL", "http://localhost:10003"),
+    "corrector": os.getenv("CORRECTOR_URL", "http://localhost:10005"),
 }
 
 # Directories for file management
@@ -260,7 +261,7 @@ async def chat(request: ChatRequest):
             source="orchestrator",
             target="user",
             type="action_request",
-            content=content or "Para generar una rúbrica, necesito que subas un documento normativo (PDF) y selecciones el nivel educativo.",
+            content=content or "Para generar una rúbrica, necesito que subas un documento normativo (PDF) y selecciones el nivel de exigencia o sector.",
             metadata={
                 "component": "RubricGenerator",
                 "routed_to": "generator",
@@ -274,7 +275,7 @@ async def chat(request: ChatRequest):
             source="orchestrator",
             target="user",
             type="action_request",
-            content=content or "Para evaluar un documento, necesito que subas la rúbrica de referencia y el documento del estudiante.",
+            content=content or "Para evaluar un documento, necesito que subas la rúbrica de referencia y el documento a evaluar.",
             metadata={
                 "component": "RubricEvaluator",
                 "routed_to": "evaluator",
@@ -411,7 +412,7 @@ async def upload_rubric(file: UploadFile = File(...)):
 
 @app.post("/api/evaluate/upload_doc")
 async def upload_doc(file: UploadFile = File(...)):
-    """Upload a student document (.pdf) for evaluation."""
+    """Upload a document (.pdf) for evaluation."""
     file_id = str(uuid.uuid4())
     file_path = UPLOAD_DIR / f"doc_{file_id}.pdf"
 
@@ -449,7 +450,7 @@ async def run_evaluation(request: EvaluateRequest):
     # Read rubric text
     rubric_text = rubric_path.read_text(encoding="utf-8")
 
-    # Extract text from student document
+    # Extract text from document to evaluate
     document_text = extract_text_from_pdf(str(doc_path))
     if not document_text.strip():
         raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento PDF")

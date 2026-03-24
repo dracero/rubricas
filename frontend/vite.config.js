@@ -8,5 +8,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8000',
     },
+    watch: {
+      ignored: ['**/.venv/**', '**/.git/**', '**/__pycache__/**']
+    }
   },
 })

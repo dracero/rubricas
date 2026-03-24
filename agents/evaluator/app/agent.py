@@ -150,7 +150,7 @@ class RubricEvaluatorAgent:
             f"Por favor evalúa el siguiente documento usando la rúbrica proporcionada.\n\n"
             f"RÚBRICA DE REFERENCIA:\n"
             f"{rubric_text[:10000]}\n\n"
-            f"DOCUMENTO DEL ESTUDIANTE:\n"
+            f"DOCUMENTO A EVALUAR:\n"
             f"{document_text[:20000]}\n\n"
             f"Instrucciones adicionales: Busca contexto normativo en Qdrant si es necesario "
             f"para validar los criterios de la rúbrica."
@@ -186,4 +186,4 @@ class RubricEvaluatorAgent:
         """Handle a plain text evaluation query (fallback)."""
         logger.info(f"📋 Text query evaluation: {query[:100]}...")
         # Return static guidance to trigger the UI via BeeRouter
-        return "¡Entendido! Para realizar una evaluación, necesito que subas dos documentos: la rúbrica de referencia y el trabajo del estudiante. Por favor, usa el formulario a continuación."
+        return "¡Entendido! Para realizar una evaluación, necesito que subas dos documentos: la rúbrica de referencia y el documento a evaluar. Por favor, usa el formulario a continuación."

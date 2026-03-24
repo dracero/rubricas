@@ -113,15 +113,15 @@ const RubricGenerator = ({ onComplete }) => {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Nivel Educativo</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Nivel de Exigencia</label>
                         <select
                             value={level}
                             onChange={(e) => setLevel(e.target.value)}
                             className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         >
-                            <option value="inicial">Inicial (Primer Año)</option>
-                            <option value="avanzado">Avanzado (3°-5° año)</option>
-                            <option value="posgrado">Posgrado</option>
+                            <option value="inicial">Operacional (Básico)</option>
+                            <option value="avanzado">Técnico/Regulatorio (Intermedio)</option>
+                            <option value="critico">Alta Criticidad (Legal)</option>
                         </select>
                     </div>
 

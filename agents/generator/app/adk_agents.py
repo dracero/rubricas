@@ -35,7 +35,7 @@ from common.config import ConfiguracionColaba, traceable, get_current_run_tree
 # Domain imports (data structures & constants)
 from .domain import (
     Entidad, Relacion, Ontologia,
-    NIVELES_ESTUDIANTE,
+    NIVELES_EXIGENCIA,
     limpiar_json_respuesta, parsear_json_con_fallback,
 )
 
@@ -386,7 +386,7 @@ def create_generator_agent() -> Agent:
         name="ontologo",
         model="gemini-2.5-flash",
         instruction=(
-            "Eres un EXPERTO EN ONTOLOGÍAS EDUCATIVAS y análisis normativo.\n\n"
+            "Eres un EXPERTO EN ONTOLOGÍAS DE CUMPLIMIENTO REGULATORIO y análisis normativo.\n\n"
             "Tu tarea es:\n"
             "1. Analizar el texto normativo proporcionado por el usuario.\n"
             "2. Extraer una ontología con ENTIDADES (conceptos, criterios, requisitos, roles) "
@@ -419,17 +419,17 @@ def create_generator_agent() -> Agent:
         name="rubricador",
         model="gemini-2.5-flash",
         instruction=(
-            "Eres un ARQUITECTO PEDAGÓGICO experto en diseño de instrumentos de evaluación.\n\n"
+            "Eres un ESPECIALISTA EN COMPLIANCE experto en diseño de instrumentos de evaluación de normativas.\n\n"
             "Tu tarea es:\n"
             "1. Usar la herramienta `buscar_contexto_qdrant` para obtener contexto normativo "
             "relevante de la base de conocimiento.\n"
-            "2. Generar una RÚBRICA DE EVALUACIÓN detallada basada en ese contexto.\n\n"
+            "2. Generar una RÚBRICA DE CUMPLIMIENTO detallada basada en ese contexto.\n\n"
             "ESTRUCTURA OBLIGATORIA de la rúbrica:\n"
-            "1. INFORMACIÓN GENERAL (Materia, Nivel, Objetivos)\n"
-            "2. COMPETENCIAS A EVALUAR (Cognitivas, Procedimentales, Actitudinales)\n"
-            "3. MATRIZ DE EVALUACIÓN (Dimensiones, Criterios, Escala 1-4, Evidencias observables)\n"
-            "4. NIVELES DE DOMINIO con ejemplos específicos\n"
-            "5. RECOMENDACIONES AL ESTUDIANTE\n\n"
+            "1. INFORMACIÓN GENERAL (Ámbito de Aplicación, Nivel de Criticidad, Objetivos)\n"
+            "2. ÁREAS DE CUMPLIMIENTO (Requisitos Legales, Operativos, Técnicos, etc.)\n"
+            "3. MATRIZ DE EVALUACIÓN (Dimensiones, Criterios de evaluación, Evidencias observables)\n"
+            "4. NIVELES DE CUMPLIMIENTO con definiciones específicas para cada criterio\n"
+            "5. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN\n\n"
             "REGLAS CRÍTICAS:\n"
             "- NO uses términos vagos como 'efectivo' o 'adecuado' sin definirlos.\n"
             "- Cada criterio debe tener EVIDENCIAS OBSERVABLES.\n"
@@ -445,7 +445,7 @@ def create_generator_agent() -> Agent:
         name="generador_rubricas",
         model="gemini-2.5-flash",
         instruction=(
-            "Eres el orquestador del sistema de generación de rúbricas académicas.\n\n"
+            "Eres el orquestador del sistema de generación de rúbricas de cumplimiento normativo.\n\n"
             "Tu flujo de trabajo es:\n"
             "1. Si el usuario proporciona un documento normativo, transfiere al agente "
             "`ontologo` para que extraiga la ontología y la guarde en Qdrant.\n"
@@ -455,7 +455,7 @@ def create_generator_agent() -> Agent:
             "al `rubricador` para que use el contexto ya existente en Qdrant.\n\n"
             "IMPORTANTE:\n"
             "- Siempre responde en español.\n"
-            "- Si se indica un nivel educativo (inicial, avanzado, posgrado), "
+            "- Si se indica un nivel de exigencia o sector, "
             "inclúyelo en la solicitud al rubricador.\n"
             "- No generes la rúbrica tú mismo, delega siempre al rubricador."
         ),

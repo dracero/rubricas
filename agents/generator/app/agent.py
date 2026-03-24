@@ -25,7 +25,7 @@ SUPPORTED_CONTENT_TYPES = ["text", "text/*"]
 
 
 class RubricGeneratorAgent:
-    """Agent that generates academic rubrics using the ADK multi-agent pipeline."""
+    """Agent that generates regulatory compliance rubrics using the ADK multi-agent pipeline."""
 
     SUPPORTED_CONTENT_TYPES = ["text", "text/*"]
 
@@ -179,7 +179,7 @@ class RubricGeneratorAgent:
         return (
             "¡Claro! Para generar una rúbrica personalizada, por favor utiliza "
             "el formulario para subir tu documento normativo (PDF) y selecciona "
-            "el nivel educativo. Si prefieres, también puedes describirme el tema "
+            "el nivel de exigencia o sector. Si prefieres, también puedes describirme el tema "
             "directamente aquí."
         )
 
@@ -196,7 +196,7 @@ class RubricGeneratorAgent:
         Args:
             document_text: Text extracted from the normative PDF
             prompt: User prompt describing the rubric to generate
-            level: Education level (inicial, avanzado, posgrado)
+            level: Level of exigency or sector (e.g. legal, technical, operational)
             session_id: Session ID for ADK Runner
 
         Returns:
@@ -215,7 +215,7 @@ class RubricGeneratorAgent:
         # Build user message for the root agent
         user_message = (
             f"Necesito generar una rúbrica de evaluación.\n\n"
-            f"NIVEL EDUCATIVO: {level}\n\n"
+            f"NIVEL DE EXIGENCIA/SECTOR: {level}\n\n"
             f"SOLICITUD: {prompt}\n\n"
             f"DOCUMENTO NORMATIVO:\n"
             f"{document_text[:20000]}\n\n"
@@ -223,7 +223,7 @@ class RubricGeneratorAgent:
             f"1. Primero usa al ontólogo para extraer la ontología del documento "
             f"y guardarla en Qdrant.\n"
             f"2. Luego usa al rubricador para buscar contexto en Qdrant y generar "
-            f"la rúbrica adaptada al nivel {level}."
+            f"la rúbrica adaptada al nivel/sector {level}."
         )
 
         try:

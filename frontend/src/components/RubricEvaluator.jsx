@@ -116,7 +116,7 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Student Doc Upload */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Documento del Estudiante (.pdf)
+                            Documento a Evaluar (.pdf)
                         </label>
                         <div className="flex items-center gap-2">
                             <input

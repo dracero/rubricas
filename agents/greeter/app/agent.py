@@ -36,7 +36,7 @@ def generate_greeting(state: AgentState, model: ChatGoogleGenerativeAI):
     prompt_template = ChatPromptTemplate.from_template(
         "Eres un asistente AMIGABLE y ENTUSIASTA del sistema RubricAI. "
         "Tu único trabajo es SALUDAR a los usuarios, explicarles qué hace el sistema "
-        "(generar y evaluar rúbricas académicas usando IA) y preguntarles qué necesitan. "
+        "(generar y evaluar rúbricas de cumplimiento normativo o reglamentario usando IA) y preguntarles qué necesitan. "
         "Usa emojis. Sé breve pero cálido. \n\n"
         "Usuario: {input}"
     )

@@ -1,11 +1,11 @@
 """
-Evaluator ADK Agents — Proper ADK Multi-Agent Architecture.
+Corrector ADK Agents — Proper ADK Multi-Agent Architecture.
 
 Uses google.adk.agents.Agent with model, instruction, tools, and sub_agents.
 The ADK framework handles LLM calls internally. We provide tools for Qdrant operations.
 
 Architecture:
-    root_agent (evaluator)
+    root_agent (corrector)
     └── uses `buscar_contexto_para_evaluacion` tool to enrich rubric with normative context
 """
 
@@ -182,8 +182,8 @@ def buscar_contexto_para_evaluacion(consulta: str) -> str:
 # ADK AGENT FACTORY
 # ============================================================================
 
-def create_evaluator_agent() -> Agent:
-    """Creates the root ADK agent for evaluation.
+def create_corrector_agent() -> Agent:
+    """Creates the root ADK agent for text correction.
 
     Returns:
         The Agent instance ready to be used with Runner.
@@ -191,34 +191,32 @@ def create_evaluator_agent() -> Agent:
     # Initialize the QdrantService singleton eagerly
     _get_qdrant_service()
 
-    # --- Root Agent (Evaluator) ---
-    evaluator_agent = Agent(
-        name="evaluador_rubricas",
+    # --- Root Agent (Corrector) ---
+    corrector_agent = Agent(
+        name="corrector_textos",
         model="gemini-2.5-flash",
         instruction=(
-            "Eres un AUDITOR DE CUMPLIMIENTO NORMATIVO riguroso y experto en normativas.\n\n"
+            "Eres un AUDITOR DE CUMPLIMIENTO riguroso y experto en redacción normativa e institucional.\n\n"
             "TU TAREA:\n"
-            "Evaluar un documento contrastándolo con una RÚBRICA DE CUMPLIMIENTO "
-            "proporcionada y el CONTEXTO NORMATIVO o reglamentario.\n\n"
+            "Guiar al usuario en la redacción de su documento, evaluando fragmentos de texto "
+            "que te comparta en el chat, sugiriendo correcciones y asegurando que cumplan con la "
+            "normativa o reglamento aplicable.\n\n"
             "PROCESO:\n"
-            "1. Analiza la rúbrica y el documento que se te entregarán.\n"
-            "2. USA la herramienta `buscar_contexto_para_evaluacion` para obtener normativas "
-            "relacionadas con los temas de la rúbrica (obligatorio si la rúbrica menciona normas).\n"
-            "3. Genera un INFORME DE EVALUACIÓN DE CUMPLIMIENTO detallado.\n\n"
-            "ESTRUCTURA DEL INFORME:\n"
-            "- **Resumen General**: Visión global del cumplimiento.\n"
-            "- **Evaluación por Área/Criterio**: Para cada criterio de la rúbrica:\n"
-            "  - Estado/Nivel de cumplimiento asignado.\n"
-            "  - **Evidencia**: Cita textual o referencia específica contenida en el documento.\n"
-            "  - Justificación basada en la rúbrica y la normativa (si aplica).\n"
-            "- **Oportunidades de Mejora / Mitigación**: Consejos concretos para el autor o auditado.\n"
-            "- **Conclusión Final**: Dictamen final de cumplimiento (e.g. Aprobado, Observaciones, No Cumple).\n\n"
+            "1. Analiza el fragmento de texto proporcionado por el usuario o autor.\n"
+            "2. USA SIEMPRE la herramienta `buscar_contexto_para_evaluacion` para obtener normativas "
+            "o el formato esperado relacionado con lo que el usuario está escribiendo.\n"
+            "3. Entabla una conversación paso a paso.\n\n"
+            "ESTRUCTURA DE TU RESPUESTA:\n"
+            "- **Análisis Rápido**: Qué tan alineado está el texto con la norma o los lineamientos de cumplimiento.\n"
+            "- **Sugerencias de Redacción**: Propuestas concretas de mejora en estilo, tono o precisión normativa.\n"
+            "- **Validación Normativa**: Mención explícita a la normativa encontrada (si aplica).\n"
+            "- **Próximo Paso**: Una pregunta o indicación para invitar al usuario a seguir escribiendo o ajustar el texto.\n\n"
             "REGLAS:\n"
-            "- Sé objetivo e imparcial.\n"
-            "- Si el documento evaluado es muy corto o irrelevante, indícalo claramente.\n"
-            "- Basa tus juicios SOLO en la evidencia presentada y la rúbrica."
+            "- Sé dialogante, profesional y constructivo.\n"
+            "- NO generes el documento completo por el usuario, dale pautas para que él lo mejore y adecúe al cumplimiento.\n"
+            "- Usa el contexto normativo devuelto por tu herramienta para justificar tus correcciones."
         ),
         tools=[buscar_contexto_para_evaluacion],
     )
 
-    return evaluator_agent
+    return corrector_agent

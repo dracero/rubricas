@@ -1,6 +1,6 @@
 # RubricAI - Sistema Multi-Agente de Rúbricas (A2A)
 
-Este sistema implementa una arquitectura **Multi-Agente (A2A)** orquestada por **BeeAI Router**, diseñada para la generación y evaluación de rúbricas académicas utilizando Inteligencia Artificial Generativa y RAG (Retrieval-Augmented Generation).
+Este sistema implementa una arquitectura **Multi-Agente (A2A)** orquestada por **BeeAI Router**, diseñada para la generación y evaluación de rúbricas de cumplimiento normativo utilizando Inteligencia Artificial Generativa y RAG (Retrieval-Augmented Generation).
 
 ## 🧠 Arquitectura del Sistema
 
@@ -90,7 +90,7 @@ graph TD
 ### 4. ⚖️ Evaluator Agent (Evaluador)
 *   **Tecnología**: Google ADK.
 *   **Puerto**: `10002`
-*   **Rol**: Realiza auditorías académicas. Compara un trabajo entregado por un estudiante contra una rúbrica específica y el contexto institucional.
+*   **Rol**: Realiza auditorías de cumplimiento. Compara un documento proporcionado por el usuario contra una rúbrica específica y el contexto normativo institucional.
 *   **Capacidades**:
     *   Lectura de documentos (PDF).
     *   Búsqueda de contexto normativo en Qdrant (`buscar_contexto_para_evaluacion`).

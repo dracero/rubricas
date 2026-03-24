@@ -15,6 +15,13 @@ uv.lock
 *.txt
 !requirements.txt
 
+# Node
+node_modules/
+dist/
+
+# PDF normative docs (store locally only)
+*.pdf
+
 # IDE
 .idea/
 .vscode/

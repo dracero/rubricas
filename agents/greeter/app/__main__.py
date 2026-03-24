@@ -33,7 +33,7 @@ def main(host, port):
         name="Agente de Bienvenida",
         description=(
             "Saluda a los usuarios, explica las capacidades del sistema RubricAI "
-            "(generación y evaluación de rúbricas académicas) y ofrece ayuda inicial."
+            "(generación y evaluación de rúbricas de cumplimiento normativo) y ofrece ayuda inicial."
         ),
         tags=["saludar", "explicar sistema", "charlar", "hola", "buen día"],
         examples=[

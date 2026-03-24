@@ -1,4 +1,4 @@
-"""Entry point for the Rubric Evaluator A2A agent server."""
+"""Entry point for the Rubric Corrector A2A agent server."""
 
 import logging
 import os
@@ -8,8 +8,8 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from app.agent import RubricEvaluatorAgent
-from app.agent_executor import RubricEvaluatorAgentExecutor
+from app.agent import RubricCorrectorAgent
+from app.agent_executor import RubricCorrectorAgentExecutor
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,57 +19,55 @@ logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option("--host", "host", default="localhost")
-@click.option("--port", "port", default=10002)
+@click.option("--port", "port", default=10005)
 def main(host, port):
-    """Start the Rubric Evaluator A2A agent server."""
+    """Start the Rubric Corrector A2A agent server."""
     if not os.getenv("GOOGLE_API_KEY"):
         logger.error("❌ GOOGLE_API_KEY not set")
         exit(1)
 
     capabilities = AgentCapabilities(streaming=False)
     skill = AgentSkill(
-        id="rubric_evaluator",
-        name="Evaluador de Rúbricas",
+        id="rubric_corrector",
+        name="Corrector de Textos",
         description=(
-            "Evalúa documentos (PDFs, textos) contra rúbricas de cumplimiento normativo "
-            "de calidad. Usa RAG con Qdrant para contexto normativo y "
-            "genera informes detallados de evaluación con puntajes por criterio."
+            "Actúa como un coach de escritura. Recibe un pequeño fragmento de texto "
+            "del usuario, consulta normativa a través de Qdrant, y sugiere "
+            "mejoras conversacionales."
         ),
         tags=[
-            "evaluar",
-            "evaluación",
-            "calificar",
-            "rúbrica",
-            "documento",
-            "PDF",
-            "auditoría",
+            "corregir",
+            "corrección",
+            "mejorar",
+            "redacción",
+            "texto",
+            "coach",
         ],
         examples=[
-            "Evaluá este trabajo de investigación",
-            "Quiero evaluar un documento con la rúbrica",
-            "Evaluar el cumplimiento normativo de un documento",
+            "Revisa este párrafo para mi ensayo",
+            "¿Cómo suena esta introducción?",
+            "Mejorar redacción de este texto",
         ],
     )
 
     agent_host_url = os.getenv("HOST_OVERRIDE") or f"http://{host}:{port}/"
 
     agent_card = AgentCard(
-        name="Evaluador de Rúbricas - RubricAI",
+        name="Corrector de Textos - RubricAI",
         description=(
-            "Evalúa documentos contra rúbricas de cumplimiento normativo usando IA. "
-            "Extrae texto de PDFs, consulta normativas en Qdrant, y genera "
-            "informes detallados de evaluación con puntajes por criterio."
+            "Revisa y ayuda a redactar partes de un documento en formato sugerencias "
+            "dialogadas usando normativa en Qdrant."
         ),
         url=agent_host_url,
         version="1.0.0",
-        default_input_modes=RubricEvaluatorAgent.SUPPORTED_CONTENT_TYPES,
-        default_output_modes=RubricEvaluatorAgent.SUPPORTED_CONTENT_TYPES,
+        default_input_modes=RubricCorrectorAgent.SUPPORTED_CONTENT_TYPES,
+        default_output_modes=RubricCorrectorAgent.SUPPORTED_CONTENT_TYPES,
         capabilities=capabilities,
         skills=[skill],
     )
 
     request_handler = DefaultRequestHandler(
-        agent_executor=RubricEvaluatorAgentExecutor(),
+        agent_executor=RubricCorrectorAgentExecutor(),
         task_store=InMemoryTaskStore(),
     )
     server = A2AStarletteApplication(
@@ -77,7 +75,7 @@ def main(host, port):
     )
 
     logger.info("=" * 60)
-    logger.info("📋 Rubric Evaluator Agent - A2A Protocol")
+    logger.info("📋 Rubric Corrector Agent - A2A Protocol")
     logger.info(f"🚀 Starting on {host}:{port}")
     logger.info(f"🔗 Agent URL: {agent_host_url}")
     logger.info("=" * 60)

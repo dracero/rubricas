@@ -101,13 +101,14 @@ class BeeRouter:
             # Initialize system prompt if memory is empty
             if not self.memory.messages:
                 from beeai_framework.backend.message import SystemMessage
-                await self.memory.add(SystemMessage(content="""Eres el Orquestador del Sistema de Rúbricas.
+                await self.memory.add(SystemMessage(content="""Eres el Orquestador del Sistema de Rúbricas de Cumplimiento Normativo.
             Tu objetivo es usar las herramientas disponibles para responder al usuario.
             
             HERRAMIENTAS:
             - 'greeting_tool': Para saludos.
             - 'generator_tool': Para generar rúbricas.
             - 'evaluator_tool': Para evaluar documentos.
+            - 'corrector_tool': Para sugerir correcciones a fragmentos de texto enviados por el usuario en el chat.
 
             INSTRUCCIONES CLAVE DE FORMATO:
             Tu respuesta DEBE seguir estrictamente el formato ReAct.
@@ -124,11 +125,14 @@ class BeeRouter:
             IMPORTANTE SOBRE GENERATOR Y EVALUATOR:
             - Si decidiste usar 'generator_tool', tu respuesta FINAL DEBE EMPEZAR con "ACTION:GENERATOR ".
               INCLUSO si la herramienta te devuelve una pregunta o pide más datos, tu respuesta al usuario DEBE empezar con "ACTION:GENERATOR " seguido del texto de la herramienta.
-              Ejemplo: "ACTION:GENERATOR ¿Para qué nivel educativo necesitas la rúbrica?"
+              Ejemplo: "ACTION:GENERATOR ¿Para qué nivel de exigencia o sector necesitas la rúbrica?"
             
             - Si decidiste usar 'evaluator_tool', tu respuesta FINAL DEBE EMPEZAR con "ACTION:EVALUATOR ".
               INCLUSO si la herramienta pide el documento, tu respuesta al usuario DEBE empezar con "ACTION:EVALUATOR " seguido del texto.
               Ejemplo: "ACTION:EVALUATOR Por favor sube el documento que deseas evaluar."
+
+            IMPORTANTE SOBRE CORRECTOR:
+            - Si decides usar 'corrector_tool', simplemente devuelve el texto de la respuesta tal cual.
             """))
 
             logger.info(f"🐝 BeeRouter processing: {user_message[:50]}...")
