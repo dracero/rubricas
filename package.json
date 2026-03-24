@@ -3,12 +3,6 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "bash _start.sh",
-    "agent:generator": "cd agents/generator && uv run python -m app --port 10001",
-    "agent:evaluator": "cd agents/evaluator && uv run python -m app --port 10002",
-    "agent:greeter": "cd agents/greeter && uv run python -m app --port 10003",
-    "agent:corrector": "cd agents/corrector && uv run python -m app --port 10005",
-    "orchestrator": "sleep 12 && uv run python -m hosts.orchestrator",
-    "frontend": "sleep 15 && cd frontend && npm run dev",
     "install:all": "npm install && cd frontend && npm install"
   },
   "devDependencies": {

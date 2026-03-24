@@ -12,7 +12,7 @@ from typing import Optional
 
 from google.adk.agents import Agent
 
-from app.skill_loader import load_skills, load_skill_from_file
+from app.skill_loader import load_skills
 from app.qdrant_service import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)

@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from common.config import setup_langsmith
 from app.main_agent import create_root_agent
 from app.qdrant_service import TOOL_REGISTRY
-from app.skill_loader import load_skill_from_file
+from app.skill_loader import load_skills
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -494,65 +494,83 @@ async def list_available_tools():
 @app.get("/api/skills")
 async def list_skills():
     """List all loaded skills."""
-    import yaml
-    import re
+    if not SKILLS_DIR.exists():
+        return {"skills": [], "total": 0}
 
+    from google.adk.skills import list_skills_in_dir
     skills = []
-    for filepath in sorted(SKILLS_DIR.glob("*.md")):
-        try:
-            content = filepath.read_text(encoding="utf-8")
-            fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
-            if fm_match:
-                meta = yaml.safe_load(fm_match.group(1)) or {}
-            else:
-                meta = {}
+    try:
+        skills_dict = list_skills_in_dir(SKILLS_DIR)
+        for skill_name, fm in skills_dict.items():
+            extra_tools = []
+            if hasattr(fm, "tools"):
+                extra_tools = fm.tools
+            elif "tools" in fm.metadata:
+                extra_tools = fm.metadata["tools"]
+                
+            extra_sub = []
+            if hasattr(fm, "sub_agents"):
+                extra_sub = fm.sub_agents
+            elif "sub_agents" in fm.metadata:
+                extra_sub = fm.metadata["sub_agents"]
 
             skills.append({
-                "filename": filepath.name,
-                "name": meta.get("name", filepath.stem),
-                "description": meta.get("description", ""),
-                "model": meta.get("model", "gemini-2.5-flash"),
-                "tools": meta.get("tools", []),
-                "sub_agents": meta.get("sub_agents", []),
+                "filename": skill_name,  # We use skill_name as the ID in the frontend now
+                "name": fm.name,
+                "description": fm.description,
+                "model": fm.metadata.get("model", getattr(fm, "model", "gemini-2.5-flash")),
+                "tools": extra_tools,
+                "sub_agents": extra_sub,
             })
-        except Exception as e:
-            logger.error(f"Error reading skill {filepath.name}: {e}")
-            skills.append({
-                "filename": filepath.name,
-                "name": filepath.stem,
-                "description": f"Error: {e}",
-                "model": "unknown",
-                "tools": [],
-                "sub_agents": [],
-            })
+    except Exception as e:
+        logger.error(f"Error listing skills: {e}")
 
     return {"skills": skills, "total": len(skills)}
 
 
 @app.post("/api/skills/upload")
 async def upload_skill(file: UploadFile = File(...)):
-    """Upload a new skill .md file."""
+    """Upload a new skill .md file and structure it as an ADK Skill directory."""
     if not file.filename.lower().endswith(".md"):
         raise HTTPException(status_code=400, detail="Solo se aceptan archivos .md")
-
-    file_path = SKILLS_DIR / file.filename
 
     content = await file.read()
     content_str = content.decode("utf-8")
 
     # Validate it has YAML frontmatter
     import re
-    if not re.match(r'^---\s*\n', content_str):
+    import yaml
+    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content_str, re.DOTALL)
+    if not fm_match:
         raise HTTPException(
             status_code=400,
             detail="El archivo debe tener frontmatter YAML (empezar con ---)"
         )
 
+    meta = yaml.safe_load(fm_match.group(1)) or {}
+    skill_name = meta.get("name")
+    
+    if not skill_name:
+        # Fallback to sanitized filename if name not provided in FM
+        skill_name = file.filename[:-3].replace("_", "-").lower()
+
+    # Enforce ADK kebab-case strict rule (a-z, 0-9, hyphens)
+    skill_name = re.sub(r'[^a-z0-9\-]', '-', skill_name.lower())
+    skill_name = re.sub(r'-+', '-', skill_name).strip('-')
+
+    if not skill_name:
+        raise HTTPException(status_code=400, detail="Nombre del skill invalido o vacio")
+
+    # Structure: skills/<name>/SKILL.md
+    skill_dir = SKILLS_DIR / skill_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    file_path = skill_dir / "SKILL.md"
+
     # Save the file
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(content_str)
 
-    logger.info(f"📄 Skill uploaded: {file.filename}")
+    logger.info(f"📄 Skill uploaded and structured in: {skill_dir}")
 
     # Rebuild the agent with the new skill
     try:
@@ -562,21 +580,21 @@ async def upload_skill(file: UploadFile = File(...)):
         # Don't fail the upload, just warn
 
     return {
-        "filename": file.filename,
+        "filename": skill_name,
         "status": "uploaded",
-        "message": f"Skill '{file.filename}' cargado y agente actualizado."
+        "message": f"Skill '{skill_name}' cargado y agente actualizado."
     }
 
 
-@app.delete("/api/skills/{filename}")
-async def delete_skill(filename: str):
-    """Delete a skill file."""
-    file_path = SKILLS_DIR / filename
-    if not file_path.exists():
+@app.delete("/api/skills/{skill_name}")
+async def delete_skill(skill_name: str):
+    """Delete an entire skill directory."""
+    skill_dir = SKILLS_DIR / skill_name
+    if not skill_dir.exists() or not skill_dir.is_dir():
         raise HTTPException(status_code=404, detail="Skill no encontrado")
 
-    file_path.unlink()
-    logger.info(f"🗑️ Skill deleted: {filename}")
+    shutil.rmtree(skill_dir)
+    logger.info(f"🗑️ Skill deleted: {skill_name}")
 
     # Rebuild the agent without this skill
     try:
@@ -584,18 +602,19 @@ async def delete_skill(filename: str):
     except Exception as e:
         logger.error(f"Error rebuilding agent: {e}")
 
-    return {"filename": filename, "status": "deleted"}
+    return {"filename": skill_name, "status": "deleted"}
 
 
-@app.get("/api/skills/{filename}/download")
-async def download_skill(filename: str):
-    """Download a skill file."""
-    file_path = SKILLS_DIR / filename
+@app.get("/api/skills/{skill_name}/download")
+async def download_skill(skill_name: str):
+    """Download a skill's SKILL.md file."""
+    file_path = SKILLS_DIR / skill_name / "SKILL.md"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Skill no encontrado")
+        
     return FileResponse(
         path=str(file_path),
-        filename=filename,
+        filename=f"{skill_name}.md",
         media_type="text/markdown",
     )
 

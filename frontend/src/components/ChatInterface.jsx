@@ -75,13 +75,23 @@ const ChatInterface = () => {
             const componentType = msg.metadata?.component;
             return (
                 <div className="space-y-4">
+                    {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                    <div className="bg-white/50 p-2 rounded-lg border border-gray-200">
+                        {componentType === 'RubricGenerator' && (
+                            <RubricGenerator />
+                        )}
+                        {componentType === 'RubricEvaluator' && (
+                            <RubricEvaluator />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+        if (msg.type === 'error') {
+            return (
+                <div className="text-red-600 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
                     <p>{msg.content}</p>
-                    {componentType === 'RubricGenerator' && (
-                        <RubricGenerator />
-                    )}
-                    {componentType === 'RubricEvaluator' && (
-                        <RubricEvaluator />
-                    )}
                 </div>
             );
         }

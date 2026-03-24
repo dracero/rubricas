@@ -20,33 +20,15 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable
 
-import yaml
 from google.adk.agents import Agent
+from google.adk.skills import list_skills_in_dir, load_skill_from_dir
+from google.adk.skills.models import Skill
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_skill_file(filepath: Path) -> Dict[str, Any]:
-    """Parse a .md skill file into frontmatter dict + body string.
-
-    Returns:
-        Dict with keys: 'meta' (dict from YAML frontmatter) and 'body' (str).
-    """
-    content = filepath.read_text(encoding="utf-8")
-
-    # Extract YAML frontmatter between --- delimiters
-    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', content, re.DOTALL)
-    if not fm_match:
-        raise ValueError(f"Skill file {filepath} missing YAML frontmatter (---)")
-
-    meta = yaml.safe_load(fm_match.group(1)) or {}
-    body = fm_match.group(2).strip()
-
-    return {"meta": meta, "body": body}
-
-
 def _parse_sub_agents_from_body(body: str) -> Dict[str, Dict[str, Any]]:
-    """Parse sub-agent definitions from the skill body.
+    """Parse sub-agent definitions from the skill body (L2 instructions).
 
     Sub-agents are defined with:
         ## sub_agent: name
@@ -64,7 +46,6 @@ def _parse_sub_agents_from_body(body: str) -> Dict[str, Dict[str, Any]]:
     parts = re.split(r'^## sub_agent:\s*(\w+)\s*$', body, flags=re.MULTILINE)
 
     # parts[0] is the main body before any sub_agent section
-    # Then alternates: name, content, name, content...
     for i in range(1, len(parts), 2):
         if i + 1 >= len(parts):
             break
@@ -112,10 +93,10 @@ def load_skills(
     available_tools: Dict[str, Callable],
     default_model: str = "gemini-2.5-flash",
 ) -> List[Agent]:
-    """Load all skill files from a directory and create ADK Agents.
+    """Load all skill directories from a directory and create ADK Agents.
 
     Args:
-        skills_dir: Path to directory containing .md skill files.
+        skills_dir: Path to directory containing skill folders.
         available_tools: Dict mapping tool function names to actual callables.
         default_model: Default model to use if not specified in skill file.
 
@@ -128,57 +109,68 @@ def load_skills(
         return []
 
     agents = []
-    skill_files = sorted(skills_path.glob("*.md"))
-
-    if not skill_files:
-        logger.info(f"📂 No .md skill files found in {skills_dir} (upload skills via frontend)")
+    
+    try:
+        skills_dict = list_skills_in_dir(skills_path)
+    except Exception as e:
+        logger.error(f"Error reading skills directory {skills_dir}: {e}")
         return []
 
-    logger.info(f"📂 Loading {len(skill_files)} skills from {skills_dir}")
+    if not skills_dict:
+        logger.info(f"📂 No skill directories found in {skills_dir} (upload skills via frontend)")
+        return []
 
-    for filepath in skill_files:
+    logger.info(f"📂 Loading {len(skills_dict)} skills from {skills_dir}")
+
+    for skill_name in skills_dict.keys():
+        skill_path = skills_path / skill_name
         try:
-            agent = _load_single_skill(filepath, available_tools, default_model)
+            skill = load_skill_from_dir(skill_path)
+            agent = _create_agent_from_skill(skill, available_tools, default_model)
             agents.append(agent)
-            logger.info(f"  ✅ Loaded skill: {agent.name} ({filepath.name})")
+            logger.info(f"  ✅ Loaded skill: {agent.name} ({skill_name})")
         except Exception as e:
-            logger.error(f"  ❌ Error loading skill {filepath.name}: {e}")
+            logger.error(f"  ❌ Error loading skill {skill_name}: {e}")
 
     logger.info(f"🎯 Loaded {len(agents)} skills total")
     return agents
 
 
-def _load_single_skill(
-    filepath: Path,
+def _create_agent_from_skill(
+    skill: Skill,
     available_tools: Dict[str, Callable],
     default_model: str,
 ) -> Agent:
-    """Load a single skill file and create an ADK Agent."""
-    parsed = _parse_skill_file(filepath)
-    meta = parsed["meta"]
-    body = parsed["body"]
+    """Load an ADK Skill object and create an ADK Agent."""
+    
+    fm = skill.frontmatter
+    
+    # Retrieve ad-hoc metadata fields
+    extra_tools = fm.metadata.get("tools", getattr(fm, "tools", []))
+    extra_sub_agents = fm.metadata.get("sub_agents", getattr(fm, "sub_agents", []))
+    model = fm.metadata.get("model", getattr(fm, "model", default_model))
 
-    name = meta.get("name", filepath.stem)
-    model = meta.get("model", default_model)
-    tool_names = meta.get("tools", [])
-    sub_agent_names = meta.get("sub_agents", [])
+    name = skill.name.replace("-", "_")
 
     # Resolve tool functions
     tools = []
-    for tool_name in tool_names:
+    for tool_name in extra_tools:
         if tool_name in available_tools:
             tools.append(available_tools[tool_name])
         else:
             logger.warning(f"  ⚠️ Tool '{tool_name}' not found for skill '{name}'")
 
-    # Parse sub-agents from body
-    sub_agents_defs = _parse_sub_agents_from_body(body)
+    # Parse sub-agents from L2 instructions
+    sub_agents_defs = _parse_sub_agents_from_body(skill.instructions)
 
     # Create sub-agent instances
     sub_agents = []
-    for sub_name in sub_agent_names:
-        if sub_name in sub_agents_defs:
-            sub_def = sub_agents_defs[sub_name]
+    for sub_name_raw in extra_sub_agents:
+        if sub_name_raw in sub_agents_defs:
+            sub_def = sub_agents_defs[sub_name_raw]
+            
+            # Sanitize sub-agent name
+            sub_name = sub_name_raw.replace("-", "_")
 
             # Resolve sub-agent tools
             sub_tools = []
@@ -195,10 +187,10 @@ def _load_single_skill(
             sub_agents.append(sub_agent)
             logger.info(f"    ↳ Sub-agent: {sub_name} (tools: {sub_def['tools']})")
         else:
-            logger.warning(f"  ⚠️ Sub-agent '{sub_name}' defined in frontmatter but not found in body")
+            logger.warning(f"  ⚠️ Sub-agent '{sub_name_raw}' defined in frontmatter but not found in instructions")
 
     # Get main instruction (before sub_agent sections)
-    instruction = _get_main_instruction(body)
+    instruction = _get_main_instruction(skill.instructions)
 
     # Build the agent
     agent_kwargs = {
@@ -213,30 +205,3 @@ def _load_single_skill(
         agent_kwargs["sub_agents"] = sub_agents
 
     return Agent(**agent_kwargs)
-
-
-def load_skill_from_file(
-    filepath: str,
-    available_tools: Dict[str, Callable],
-    default_model: str = "gemini-2.5-flash",
-) -> Agent:
-    """Load a single skill from a specific file path.
-
-    This function allows loading skills from any location,
-    not just the skills directory.
-
-    Args:
-        filepath: Absolute path to the .md skill file.
-        available_tools: Dict mapping tool function names to actual callables.
-        default_model: Default model to use if not specified in skill file.
-
-    Returns:
-        An ADK Agent instance.
-    """
-    path = Path(filepath)
-    if not path.exists():
-        raise FileNotFoundError(f"Skill file not found: {filepath}")
-    if not path.suffix == ".md":
-        raise ValueError(f"Skill file must be .md: {filepath}")
-
-    return _load_single_skill(path, available_tools, default_model)
