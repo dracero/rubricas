@@ -3,7 +3,7 @@ Unified Qdrant Service + ADK Tool Functions.
 
 Consolidates the QdrantService that was previously duplicated across
 generator, evaluator, and corrector agents into a single module.
-Uses Gemini text-embedding-004 for embeddings (768 dimensions).
+Uses Gemini gemini-embedding-001 for embeddings (3072 dimensions).
 """
 
 import os
@@ -32,8 +32,9 @@ from app.domain import (
 logger = logging.getLogger(__name__)
 
 # Gemini embedding config
-EMBEDDING_MODEL = "text-embedding-004"
-EMBEDDING_DIMENSION = 768
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIMENSION = 3072
+VERSION = "FIX_QDRANT_3072_V1"
 
 # ============================================================================
 # Module-level singleton
@@ -73,12 +74,12 @@ class QdrantService:
 
         # Gemini embedding client
         self.genai_client = genai.Client(api_key=config.GOOGLE_API_KEY)
-        logger.info(f"✅ Gemini embedding model: {EMBEDDING_MODEL} ({EMBEDDING_DIMENSION}d)")
+        logger.info(f"✅ Gemini embedding model: {EMBEDDING_MODEL} ({EMBEDDING_DIMENSION}d) [VERSION: {VERSION}]")
 
         self._init_collection()
 
     def _init_collection(self):
-        """Create the Qdrant collection if it doesn't exist."""
+        """Create the Qdrant collection if it doesn't exist, or recreate if dimensions mismatch."""
         if not self.client:
             return
         try:
@@ -87,8 +88,22 @@ class QdrantService:
                 c.name == self.collection_name
                 for c in collections.collections
             )
+            
+            if exists:
+                # Check dimensions
+                info = self.client.get_collection(self.collection_name)
+                current_dim = info.config.params.vectors.size
+                if current_dim != EMBEDDING_DIMENSION:
+                    logger.warning(
+                        f"⚠️ Dimension mismatch in {self.collection_name}: "
+                        f"current={current_dim}, expected={EMBEDDING_DIMENSION}. "
+                        "Recreating collection..."
+                    )
+                    self.client.delete_collection(self.collection_name)
+                    exists = False
+
             if not exists:
-                logger.info(f"📦 Creating Qdrant collection: {self.collection_name}")
+                logger.info(f"📦 Creating Qdrant collection: {self.collection_name} (dim={EMBEDDING_DIMENSION})")
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=qmodels.VectorParams(
@@ -295,6 +310,11 @@ def guardar_ontologia_en_qdrant(ontologia_json: str) -> str:
         )
 
         qdrant = _get_qdrant_service()
+        
+        # Clear existing collection before saving new ontology
+        logger.info("🗑️ Limpiando colección Qdrant antes de guardar nueva ontología...")
+        qdrant.clear_collection()
+        
         success = qdrant.save_ontology(ontologia)
 
         if success:

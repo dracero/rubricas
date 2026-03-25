@@ -196,6 +196,7 @@ def _create_agent_from_skill(
     agent_kwargs = {
         "name": name,
         "model": model,
+        "description": fm.description,
         "instruction": instruction,
     }
 

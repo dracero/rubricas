@@ -27,10 +27,7 @@ CUANDO el usuario solicite una evaluación:
 CUANDO el usuario proporcione los IDs de los archivos (rubric_id y document_id):
 1. Usa `leer_rubrica_subida` para obtener el texto de la rúbrica.
 2. Usa `leer_documento_subido` para obtener el texto del documento (PDF).
-3. **Verificación de Ontología (CRÍTICO):** Antes de evaluar, usa `buscar_contexto_qdrant` enviando como consulta el título o los conceptos clave del documento para verificar si ya existe una ontología en Qdrant.
-   - Si encuentras contexto, úsalo para validar que el documento cumple con la estructura semántica esperada.
-   - Si no encuentras contexto, informa al usuario: "No he encontrado una ontología previa para este documento en Qdrant. Realizaré la evaluación basándome únicamente en el texto del PDF y la rúbrica."
-4. **RAG Adicional:** Si necesitas más detalles, busca normativas relacionadas en Qdrant.
+3. **RAG Opcional:** Si el documento menciona normativas externas, usa `buscar_contexto_qdrant` para obtener información adicional que pueda enriquecer la evaluación.
 
 ### PASO 3: Ejecutar la Evaluación
 Compara el documento contra cada criterio de la rúbrica. Para cada punto evaluado, determina:

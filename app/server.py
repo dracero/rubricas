@@ -187,8 +187,8 @@ async def run_agent(message: str, session_id: str = None) -> str:
         parts=[types.Part.from_text(text=message)]
     )
 
-    # Retry configuration for 503 errors
-    max_retries = 3
+    # Retry configuration for transient errors (503, 429)
+    max_retries = 4
     retry_delay = 2.0  # seconds
 
     for attempt in range(max_retries):
@@ -200,28 +200,71 @@ async def run_agent(message: str, session_id: str = None) -> str:
                 session_id=sid,
                 new_message=user_content,
             ):
+                # Debug logging for all events
+                author = getattr(event, 'author', '?')
+                has_content = event.content is not None
+                actions = getattr(event, 'actions', None)
+                is_final = getattr(event, 'is_final_response', None)
+                
+                logger.info(
+                    f"📬 Event: author={author}, "
+                    f"has_content={has_content}, "
+                    f"is_final={is_final}, "
+                    f"actions={actions}"
+                )
+                
                 if event.content and event.content.parts:
-                    for part in event.content.parts:
+                    for i, part in enumerate(event.content.parts):
+                        has_text = bool(part.text)
+                        has_fc = hasattr(part, 'function_call') and part.function_call is not None
+                        has_fr = hasattr(part, 'function_response') and part.function_response is not None
+                        logger.info(
+                            f"  📝 Part[{i}]: text={has_text}, "
+                            f"function_call={has_fc}, "
+                            f"function_response={has_fr}"
+                        )
+                        if has_fc:
+                            fc = part.function_call
+                            logger.info(f"    🔧 Function call: {getattr(fc, 'name', '?')}")
                         if part.text:
                             response_parts.append(part.text)
 
             if not response_parts:
+                logger.warning("⚠️ No text parts collected from any event!")
                 return "Sin respuesta del agente."
             
             return "\n".join(response_parts)
 
         except Exception as e:
             error_str = str(e)
-            if "503" in error_str and "UNAVAILABLE" in error_str and attempt < max_retries - 1:
-                logger.warning(f"⚠️ 503 UNAVAILABLE (capacidad limitada en Google API). "
-                             f"Reintentando en {retry_delay}s... (Intento {attempt + 1}/{max_retries})")
-                await asyncio.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
+            is_503 = "503" in error_str and "UNAVAILABLE" in error_str
+            is_429 = "429" in error_str and "RESOURCE_EXHAUSTED" in error_str
+
+            if (is_503 or is_429) and attempt < max_retries - 1:
+                # Extract retry delay from API response if available
+                wait_time = retry_delay
+                if is_429:
+                    import re
+                    delay_match = re.search(r'retryDelay.*?(\d+)', error_str)
+                    if delay_match:
+                        wait_time = max(float(delay_match.group(1)), retry_delay)
+                    else:
+                        wait_time = max(30.0, retry_delay)  # Default 30s for rate limits
+
+                error_type = "429 RESOURCE_EXHAUSTED" if is_429 else "503 UNAVAILABLE"
+                logger.warning(
+                    f"⚠️ {error_type}. "
+                    f"Reintentando en {wait_time:.0f}s... "
+                    f"(Intento {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(wait_time)
+                retry_delay *= 2  # Exponential backoff for next attempt
                 continue
             
-            # Re-raise if not a 503 or no more retries
+            # Re-raise if not retryable or no more retries
             logger.error(f"❌ Error en el agente tras {attempt + 1} intentos: {e}")
             raise e
+
 
 
 # ============================================================================
@@ -466,7 +509,7 @@ async def run_evaluation(request: EvaluateRequest):
 
     logger.info(f"📋 Evaluating: rubric={len(rubric_text)} chars, doc={len(document_text)} chars")
 
-    # Build the message for the evaluator skill
+    # Build the evaluation message with inline text
     agent_message = (
         f"Evalúa el siguiente documento usando esta rúbrica de cumplimiento.\n\n"
         f"--- RÚBRICA ---\n{rubric_text[:20000]}\n\n"
@@ -474,12 +517,70 @@ async def run_evaluation(request: EvaluateRequest):
     )
 
     try:
-        eval_text = await run_agent(agent_message)
+        # Use a dedicated evaluator agent to bypass orchestrator transfer issues.
+        # The orchestrator's transfer mechanism was failing silently (only one
+        # model call, no text output). Running the evaluator directly is more
+        # reliable since we already know which agent to use.
+        from google.adk.agents import Agent
+
+        evaluator_agent = Agent(
+            name="evaluador_directo",
+            model="gemini-2.5-flash",
+            instruction=(
+                "Eres un experto en auditoría y cumplimiento normativo. "
+                "Tu tarea es evaluar un documento contra una rúbrica de cumplimiento.\n\n"
+                "Para cada criterio de la rúbrica, determina:\n"
+                "- **Estado:** Cumple / No Cumple / Parcialmente Cumple\n"
+                "- **Evidencia:** Cita textual del documento que justifica el estado\n"
+                "- **Observaciones:** Explicación de por qué se asignó ese estado\n"
+                "- **Recomendación:** Qué debe cambiar para mejorar\n\n"
+                "Al final, presenta un informe con:\n"
+                "1. Resumen Ejecutivo (puntaje global o porcentaje de cumplimiento)\n"
+                "2. Detalle por Criterio (usa tablas Markdown)\n"
+                "3. Conclusiones y próximos pasos\n\n"
+                "Sé riguroso, objetivo y profesional. Basa tus comentarios "
+                "exclusivamente en la evidencia del documento."
+            ),
+        )
+
+        eval_session_service = InMemorySessionService()
+        eval_runner = Runner(
+            agent=evaluator_agent,
+            app_name="rubricai_evaluator",
+            session_service=eval_session_service,
+        )
+
+        eval_sid = str(uuid.uuid4())
+        await eval_session_service.create_session(
+            app_name="rubricai_evaluator",
+            user_id=USER_ID,
+            session_id=eval_sid,
+        )
+
+        user_content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=agent_message)]
+        )
+
+        response_parts = []
+        async for event in eval_runner.run_async(
+            user_id=USER_ID,
+            session_id=eval_sid,
+            new_message=user_content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        response_parts.append(part.text)
+
+        eval_text = "\n".join(response_parts) if response_parts else "Sin respuesta del evaluador."
 
         output_filename = f"evaluacion_{request.doc_id[:8]}.txt"
         output_path = OUTPUT_DIR / output_filename
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(eval_text)
+
+        logger.info(f"✅ Evaluation completed: {len(eval_text)} chars")
 
         return {
             "result": eval_text,

@@ -1,126 +1,105 @@
-# RubricAI - Sistema Multi-Agente de Rúbricas (A2A)
+# RubricAI - Sistema de Rúbricas Inteligente (Google ADK)
 
-Este sistema implementa una arquitectura **Multi-Agente (A2A)** orquestada por **BeeAI Router**, diseñada para la generación y evaluación de rúbricas de cumplimiento normativo utilizando Inteligencia Artificial Generativa y RAG (Retrieval-Augmented Generation).
+RubricAI es un sistema avanzado diseñado para la **generación, evaluación y corrección de rúbricas** de cumplimiento normativo utilizando Inteligencia Artificial (Google Gemini) y RAG (Retrieval-Augmented Generation).
 
-## 🧠 Arquitectura del Sistema
+A diferencia de versiones anteriores, este sistema utiliza una arquitectura **unificada basada en Skills**, donde cada agente especializado se carga dinámicamente como una "habilidad" del orquestador central.
 
-El sistema se compone de un Orquestador central y varios Agentes especializados que se comunican a través del protocolo **A2A (Agent-to-Agent)** sobre HTTP.
+## 🚀 Arquitectura del Sistema (Skills-Based)
 
-### Diagrama de Arquitectura
+El sistema se ejecuta en un único servidor (FastAPI) que utiliza el **ADK (Agent Development Kit)** de Google para gestionar un agente orquestador y sus respectivos sub-agentes (skills).
+
+### Diagrama de Funcionamiento
 
 ```mermaid
 graph TD
-    %% Estilos
-    classDef user fill:#f9f,stroke:#333,stroke-width:2px
-    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    classDef orchestrator fill:#fff9c4,stroke:#fbc02d,stroke-width:2px
-    classDef agent fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    classDef subagent fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px,stroke-dasharray: 5 5
-    classDef db fill:#e0e0e0,stroke:#616161,stroke-width:2px
-
-    User((Usuario)):::user
-    Frontend["Frontend A2UI (React + Vite)"]:::frontend
+    User((Usuario))
+    Frontend["Frontend (React + Vite)"]
+    Server["RubricAI Server (FastAPI)"]
     
-    subgraph Host ["Host Orquestador"]
-        Router["BeeAI Router (Orquestador Central)"]:::orchestrator
-        A2A_Client["Remote Agent Connection (Cliente A2A)"]:::orchestrator
-    end
-
-    subgraph Agentes ["Red de Agentes A2A Servers"]
-        direction TB
+    subgraph Core ["Núcleo de Inteligencia"]
+        Orchestrator["Orquestador (ADK Root Agent)"]
+        Loader["Skill Loader"]
+        Tools["Tool Registry"]
         
-        subgraph GreeterPod ["Greeter Agent"]
-            Greeter["Greeter (LangGraph)"]:::agent
-        end
-
-        subgraph GeneratorPod ["Generator Agent Google ADK"]
-            GenRoot["Orquestador Generador"]:::agent
-            Ontologo["Ontologo"]:::subagent
-            Rubricador["Rubricador"]:::subagent
-            GenRoot --> Ontologo
-            GenRoot --> Rubricador
-        end
-
-        subgraph EvaluatorPod ["Evaluator Agent Google ADK"]
-            EvalRoot["Evaluador"]:::agent
+        subgraph Skills ["Agentes Especializados (Dynamic)"]
+            Gen["Generator Skill"]
+            Eval["Evaluator Skill"]
+            Other["..."]
         end
     end
 
-    subgraph Storage ["Persistencia"]
-        Qdrant[("Qdrant Vector DB")]:::db
-    end
-
-    %% Conexiones
-    User <-->|Chat y Acciones| Frontend
-    Frontend <-->|API JSON| Router
-    Router -->|Ruteo Inteligente| A2A_Client
-    
-    %% Conexiones A2A
-    A2A_Client <-->|A2A Protocol| Greeter
-    A2A_Client <-->|A2A Protocol| GenRoot
-    A2A_Client <-->|A2A Protocol| EvalRoot
-
-    %% Conexiones a Datos
-    Ontologo -->|Guarda Ontologia| Qdrant
-    Rubricador -->|Lee Contexto| Qdrant
-    EvalRoot -->|Lee Contexto| Qdrant
+    User <--> Frontend
+    Frontend <--> Server
+    Server <--> Orchestrator
+    Loader -->|Carga .md| Skills
+    Orchestrator -->|Delega a| Skills
+    Skills -->|Invocan| Tools
+    Tools <--> Qdrant[("Qdrant Vector DB")]
 ```
 
-## 🤖 Descripción de los Agentes
+## 🧠 Funcionamiento de las Skills
 
-### 1. 🐝 BeeAI Router (Orquestador)
-*   **Tecnología**: [BeeAI Framework](https://github.com/i-am-bee/beeai-framework) + Google Gemini de orquestador.
-*   **Rol**: Es el cerebro central del sistema. No realiza tareas por sí mismo, sino que analiza la intención del usuario y "enruta" la solicitud al agente especializado correspondiente.
-*   **Funcionamiento**: Utiliza un modelo ReAct para decidir qué herramienta (agente remoto) invocar basándose en la descripción semántica de cada agente.
+El sistema permite cargar agentes de forma dinámica sin necesidad de reiniciar el servidor. Cada skill se define en una carpeta dentro del directorio `skills/`.
 
-### 2. 👋 Greeter Agent (Bienvenida)
-*   **Tecnología**: [LangGraph](https://langchain-ai.github.io/langgraph/).
-*   **Puerto**: `10003`
-*   **Rol**: Agente conversacional ligero encargado de dar la bienvenida, explicar el propósito del sistema y guiar al usuario en sus primeros pasos.
-*   **Personalidad**: Amigable, entusiasta y servicial.
+### Estructura de una Skill (`SKILL.md`)
+Cada habilidad es un archivo Markdown con **Frontmatter YAML** que define su configuración:
 
-### 3. 📝 Generator Agent (Generador de Rúbricas)
-*   **Tecnología**: [Google ADK (Agent Development Kit)](https://github.com/google/generative-ai-python).
-*   **Puerto**: `10001`
-*   **Rol**: Genera instrumentos de evaluación complejos basándose en normativas.
-*   **Sub-Agentes**:
-    *   **Ontólogo**: Analiza documentos normativos (PDFs), extrae entidades y relaciones semánticas, y las guarda en Qdrant.
-    *   **Rubricador**: Consulta la base de conocimiento (Qdrant) para recuperar el contexto normativo y redacta la rúbrica detallada en Markdown.
+```yaml
+---
+name: evaluador-de-cumplimiento
+description: Evalúa documentos PDF contra una rúbrica específica.
+model: gemini-2.5-flash
+tools:
+  - leer_rubrica_subida
+  - leer_documento_subido
+  - buscar_contexto_qdrant
+---
+# Instrucciones del Agente
+Eres un experto en auditoría...
+[Aquí van las directivas detalladas para el modelo]
+```
 
-### 4. ⚖️ Evaluator Agent (Evaluador)
-*   **Tecnología**: Google ADK.
-*   **Puerto**: `10002`
-*   **Rol**: Realiza auditorías de cumplimiento. Compara un documento proporcionado por el usuario contra una rúbrica específica y el contexto normativo institucional.
-*   **Capacidades**:
-    *   Lectura de documentos (PDF).
-    *   Búsqueda de contexto normativo en Qdrant (`buscar_contexto_para_evaluacion`).
-    *   Generación de informes de retroalimentación constructiva.
+### Carga Dinámica (`skill_loader.py`)
+El `skill_loader` lee estos archivos, procesa las instrucciones y herramientas, y genera automáticamente instancias de `google.adk.agents.Agent`. Si una skill requiere sub-agentes adicionales (L2), estos se definen en el mismo archivo bajo secciones `## sub_agent:`.
 
-## 📡 Protocolo A2A (Agent-to-Agent)
+## 🛠️ Registro de Herramientas (External Tools)
 
-El sistema utiliza un protocolo de comunicación estandarizado basado en **JSON-RPC 2.0** sobre HTTP.
+Las habilidades no tienen acceso directo al sistema operativo o bases de datos por seguridad. Utilizan un **Registro Central de Herramientas** definido en `app/qdrant_service.py` (`TOOL_REGISTRY`).
 
-*   **Discovery**: El orquestador descubre las capacidades de los agentes consultando el endpoint `/.well-known/agent.json` de cada servicio.
-*   **Mensajería**: Las interacciones se envían mediante el método `message/send`.
-    ```json
-    {
-      "jsonrpc": "2.0",
-      "method": "message/send",
-      "params": {
-        "message": {
-          "role": "user",
-          "parts": [{"type": "text", "text": "Hola"}],
-          "contextId": "..."
-        }
-      },
-      "id": "..."
-    }
-    ```
+### Herramientas Disponibles:
+*   `leer_rubrica_subida(rubric_id)`: Recupera el texto de una rúbrica cargada por el usuario.
+*   `leer_documento_subido(document_id)`: Extrae texto de un PDF para su evaluación.
+*   `buscar_contexto_qdrant(consulta)`: Realiza búsquedas vectoriales (RAG) para obtener contexto normativo indexado.
+*   `guardar_ontologia_en_qdrant(ontologia_json)`: Guarda entidades y relaciones extraídas en la base de datos vectorial.
+
+Para usar una herramienta, simplemente se debe listar su nombre en el campo `tools:` del frontmatter del `SKILL.md`.
+
+## 🖥️ Integración con la Interfaz (UI Tags)
+
+El sistema utiliza etiquetas especiales en las respuestas de texto de los agentes para activar componentes específicos en el frontend:
+
+*   `[UI:RubricGenerator]`: Activa el panel de generación de rúbricas.
+*   `[UI:RubricEvaluator]`: Activa el panel de subida de rúbrica y documento para evaluación.
+
+Estas etiquetas permiten que la conversación fluya naturalmente hacia acciones concretas en la web.
 
 ## 🛠️ Tecnologías Clave
 
-*   **Backend**: Python, FastAPI/Starlette, `uv`.
-*   **Frontend**: React, Vite, TailwindCSS.
 *   **IA / LLM**: Google Gemini 2.5 Flash.
-*   **Base de Datos Vectorial**: Qdrant (para almacenamiento de ontologías y RAG).
-*   **Frameworks de Agentes**: BeeAI (IBM), LangGraph, Google ADK.
+*   **Agent SDK**: Google ADK (Agent Development Kit).
+*   **Backend**: Python 3.12+, FastAPI, `uv`.
+*   **Base de Datos Vectorial**: Qdrant.
+*   **Embeddings**: `gemini-embedding-001` (3072 dimensiones).
+*   **Frontend**: React, Vite, TailwindCSS.
+
+## 🏁 Cómo Ejecutar
+
+1.  **Configurar Variables**: Crear un `.env` con `GOOGLE_API_KEY`, `QDRANT_URL` y `QDRANT_API_KEY`.
+2.  **Iniciar Servidor**:
+    ```bash
+    python -m app.server
+    ```
+3.  **Iniciar Frontend**:
+    ```bash
+    cd frontend && npm install && npm run dev
+    ```
