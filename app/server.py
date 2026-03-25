@@ -187,19 +187,41 @@ async def run_agent(message: str, session_id: str = None) -> str:
         parts=[types.Part.from_text(text=message)]
     )
 
-    # Run the agent and collect response
-    response_parts = []
-    async for event in runner.run_async(
-        user_id=USER_ID,
-        session_id=sid,
-        new_message=user_content,
-    ):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if part.text:
-                    response_parts.append(part.text)
+    # Retry configuration for 503 errors
+    max_retries = 3
+    retry_delay = 2.0  # seconds
 
-    return "\n".join(response_parts) if response_parts else "Sin respuesta del agente."
+    for attempt in range(max_retries):
+        try:
+            # Run the agent and collect response
+            response_parts = []
+            async for event in runner.run_async(
+                user_id=USER_ID,
+                session_id=sid,
+                new_message=user_content,
+            ):
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            response_parts.append(part.text)
+
+            if not response_parts:
+                return "Sin respuesta del agente."
+            
+            return "\n".join(response_parts)
+
+        except Exception as e:
+            error_str = str(e)
+            if "503" in error_str and "UNAVAILABLE" in error_str and attempt < max_retries - 1:
+                logger.warning(f"⚠️ 503 UNAVAILABLE (capacidad limitada en Google API). "
+                             f"Reintentando en {retry_delay}s... (Intento {attempt + 1}/{max_retries})")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            
+            # Re-raise if not a 503 or no more retries
+            logger.error(f"❌ Error en el agente tras {attempt + 1} intentos: {e}")
+            raise e
 
 
 # ============================================================================
