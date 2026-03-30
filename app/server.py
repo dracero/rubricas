@@ -36,6 +36,10 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
+import markdown
+from xhtml2pdf import pisa
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -148,6 +152,55 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         raise HTTPException(status_code=500, detail="pypdf not installed")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading PDF: {str(e)}")
+
+
+def md_to_pdf(md_text: str, output_path: str):
+    """Convert Markdown text to a PDF file using markdown and xhtml2pdf."""
+    html_content = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
+    
+    # Simple CSS to make tables look good
+    html_with_css = f"""
+    <html>
+    <head>
+    <style>
+        @page {{
+            size: A4;
+            margin: 2cm;
+        }}
+        body {{ 
+            font-family: Helvetica, Arial, sans-serif; 
+            font-size: 12px;
+            color: #333;
+        }}
+        h1, h2, h3 {{ color: #0056b3; }}
+        table {{ 
+            border-collapse: collapse; 
+            width: 100%; 
+            margin-bottom: 20px;
+        }}
+        th, td {{ 
+            border: 1px solid #ddd; 
+            padding: 8px; 
+            text-align: left; 
+        }}
+        th {{ 
+            background-color: #f4f6f8; 
+            font-weight: bold;
+        }}
+        tr:nth-child(even) {{ background-color: #f9f9f9; }}
+    </style>
+    </head>
+    <body>
+    {html_content}
+    </body>
+    </html>
+    """
+    
+    with open(output_path, "wb") as pdf_file:
+        pisa_status = pisa.CreatePDF(html_with_css, dest=pdf_file)
+        if pisa_status.err:
+            logger.error(f"Error creating PDF: {pisa_status.err}")
+
 
 
 # ============================================================================
@@ -424,16 +477,21 @@ async def generate_rubric(request: GenerateRequest):
     try:
         rubric_text = await run_agent(agent_message)
 
-        output_filename = f"rubrica_{request.document_id[:8]}.txt"
-        output_path = OUTPUT_DIR / output_filename
-        with open(output_path, "w", encoding="utf-8") as f:
+        output_filename_txt = f"rubrica_{request.document_id[:8]}.txt"
+        output_path_txt = OUTPUT_DIR / output_filename_txt
+        with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(rubric_text)
 
-        logger.info(f"✅ Rubric generated and saved: {output_filename}")
+        # Generate PDF version
+        output_filename_pdf = f"rubrica_{request.document_id[:8]}.pdf"
+        output_path_pdf = OUTPUT_DIR / output_filename_pdf
+        md_to_pdf(rubric_text, str(output_path_pdf))
+
+        logger.info(f"✅ Rubric generated and saved to PDF: {output_filename_pdf}")
 
         return {
             "result": rubric_text,
-            "download_url": f"/api/download/{output_filename}",
+            "download_url": f"/api/download/{output_filename_pdf}",
         }
 
     except Exception as e:
@@ -462,7 +520,9 @@ async def download_file(filename: str):
 async def upload_rubric(file: UploadFile = File(...)):
     """Upload a rubric file for evaluation."""
     file_id = str(uuid.uuid4())
-    ext = Path(file.filename).suffix or ".txt"
+    ext = Path(file.filename).suffix.lower()
+    if ext not in [".txt", ".md", ".pdf"]:
+        ext = ".txt"
     file_path = UPLOAD_DIR / f"rubric_{file_id}{ext}"
 
     with open(file_path, "wb") as f:
@@ -489,7 +549,7 @@ async def upload_doc(file: UploadFile = File(...)):
 async def run_evaluation(request: EvaluateRequest):
     """Run evaluation: compare a document against a rubric."""
     rubric_path = None
-    for ext in [".txt", ".md"]:
+    for ext in [".pdf", ".txt", ".md"]:
         candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
         if candidate.exists():
             rubric_path = candidate
@@ -502,7 +562,12 @@ async def run_evaluation(request: EvaluateRequest):
     if not doc_path.exists():
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    rubric_text = rubric_path.read_text(encoding="utf-8")
+    if rubric_path.suffix.lower() == ".pdf":
+        rubric_text = extract_text_from_pdf(str(rubric_path))
+        if not rubric_text.strip():
+            raise HTTPException(status_code=400, detail="No se pudo extraer texto de la rúbrica PDF")
+    else:
+        rubric_text = rubric_path.read_text(encoding="utf-8")
     document_text = extract_text_from_pdf(str(doc_path))
     if not document_text.strip():
         raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento PDF")
@@ -536,7 +601,10 @@ async def run_evaluation(request: EvaluateRequest):
                 "- **Recomendación:** Qué debe cambiar para mejorar\n\n"
                 "Al final, presenta un informe con:\n"
                 "1. Resumen Ejecutivo (puntaje global o porcentaje de cumplimiento)\n"
-                "2. Detalle por Criterio (usa tablas Markdown)\n"
+                "2. Detalle por Criterio. ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN.\n"
+                "   Las columnas de la tabla DEBEN ser: Dimensión | Criterio de Evaluación | Estado | Evidencia (Cita Textual) | Observaciones | Recomendación.\n"
+                "   ASEGÚRATE de que cada fila tenga exactamente 6 celdas separadas por |.\n"
+                "   ASEGÚRATE de que la línea separadora (-----|-----|...) tenga también 6 secciones.\n"
                 "3. Conclusiones y próximos pasos\n\n"
                 "Sé riguroso, objetivo y profesional. Basa tus comentarios "
                 "exclusivamente en la evidencia del documento."
@@ -575,16 +643,21 @@ async def run_evaluation(request: EvaluateRequest):
 
         eval_text = "\n".join(response_parts) if response_parts else "Sin respuesta del evaluador."
 
-        output_filename = f"evaluacion_{request.doc_id[:8]}.txt"
-        output_path = OUTPUT_DIR / output_filename
-        with open(output_path, "w", encoding="utf-8") as f:
+        output_filename_txt = f"evaluacion_{request.doc_id[:8]}.txt"
+        output_path_txt = OUTPUT_DIR / output_filename_txt
+        with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(eval_text)
 
-        logger.info(f"✅ Evaluation completed: {len(eval_text)} chars")
+        # Generate PDF version
+        output_filename_pdf = f"evaluacion_{request.doc_id[:8]}.pdf"
+        output_path_pdf = OUTPUT_DIR / output_filename_pdf
+        md_to_pdf(eval_text, str(output_path_pdf))
+
+        logger.info(f"✅ Evaluation completed and saved to PDF: {output_filename_pdf}")
 
         return {
             "result": eval_text,
-            "download_url": f"/api/download/{output_filename}",
+            "download_url": f"/api/download/{output_filename_pdf}",
         }
 
     except Exception as e:

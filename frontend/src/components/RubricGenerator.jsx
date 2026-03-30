@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, FileText, Loader2, CheckCircle, AlertCircle, Download } from 'lucide-react';
+import MarkdownTable from './MarkdownTable';
 
 const RubricGenerator = ({ onComplete }) => {
     const [file, setFile] = useState(null);
@@ -72,9 +73,7 @@ const RubricGenerator = ({ onComplete }) => {
                         <span className="font-medium">¡Rúbrica Generada!</span>
                     </div>
                     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
-                        <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
-                            {result?.result || result?.content || 'Sin contenido'}
-                        </pre>
+                        <MarkdownTable content={result?.result || result?.content || 'Sin contenido'} />
                     </div>
                     {result?.download_url && (
                         <a

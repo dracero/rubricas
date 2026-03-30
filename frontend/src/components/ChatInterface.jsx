@@ -4,6 +4,7 @@ import RubricGenerator from './RubricGenerator';
 import RubricEvaluator from './RubricEvaluator';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
+import MarkdownTable from './MarkdownTable';
 
 const ChatInterface = () => {
     const [messages, setMessages] = useState([
@@ -75,7 +76,7 @@ const ChatInterface = () => {
             const componentType = msg.metadata?.component;
             return (
                 <div className="space-y-4">
-                    {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                    {msg.content && <MarkdownTable content={msg.content} />}
                     <div className="bg-white/50 p-2 rounded-lg border border-gray-200">
                         {componentType === 'RubricGenerator' && (
                             <RubricGenerator />
@@ -95,7 +96,7 @@ const ChatInterface = () => {
                 </div>
             );
         }
-        return <p className="whitespace-pre-wrap">{msg.content}</p>;
+        return <MarkdownTable content={msg.content} />;
     };
 
     return (

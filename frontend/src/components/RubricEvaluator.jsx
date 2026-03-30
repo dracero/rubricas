@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, FileSearch, Loader2, CheckCircle, AlertCircle, Download } from 'lucide-react';
+import MarkdownTable from './MarkdownTable';
 
 const RubricEvaluator = ({ onComplete }) => {
     const [rubricFile, setRubricFile] = useState(null);
@@ -74,9 +75,7 @@ const RubricEvaluator = ({ onComplete }) => {
                         <span className="font-medium">¡Evaluación Completada!</span>
                     </div>
                     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
-                        <pre className="whitespace-pre-wrap text-sm text-gray-800 font-sans">
-                            {result?.result || result?.content || 'Sin contenido'}
-                        </pre>
+                        <MarkdownTable content={result?.result || result?.content || 'Sin contenido'} />
                     </div>
                     {result?.download_url && (
                         <a
@@ -100,17 +99,24 @@ const RubricEvaluator = ({ onComplete }) => {
 
                     {/* Rubric Upload */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Rúbrica de Referencia (.txt/.md)
+                            <p className="text-sm font-medium text-gray-700 mb-2">
+                            Rúbrica de Referencia (.txt/.md/.pdf)
+                            </p>
+                            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+                                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                    <Upload className="w-8 h-8 mb-3 text-gray-400" />
+                                    <p className="mb-2 text-sm text-gray-500">Click para subir</p>
+                                    <p className="text-xs text-gray-500 overflow-hidden text-ellipsis max-w-full px-4 text-center">
+                                        {rubricFile ? rubricFile.name : "Sin archivo"}
+                                    </p>
+                                </div>
+                                <input 
+                                    type="file" 
+                                    className="hidden" 
+                                    accept=".txt,.md,.pdf" 
+                                    onChange={(e) => setRubricFile(e.target.files[0])} 
+                                />
                         </label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="file"
-                                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
-                                accept=".txt,.md"
-                                onChange={(e) => setRubricFile(e.target.files[0])}
-                            />
-                        </div>
                     </div>
 
                     {/* Student Doc Upload */}

@@ -118,9 +118,9 @@ Tu tarea es:
 
 1. INFORMACIÓN GENERAL (Ámbito de Aplicación, Nivel de Criticidad, Objetivos)
 2. ÁREAS DE CUMPLIMIENTO (Requisitos Legales, Operativos, Técnicos, etc.)
-3. MATRIZ DE EVALUACIÓN (Dimensiones, Criterios de evaluación, Evidencias observables)
-4. NIVELES DE CUMPLIMIENTO con definiciones específicas para cada criterio
-5. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN
+3. MATRIZ DE EVALUACIÓN. ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN. 
+   Las columnas de la tabla DEBEN ser: Dimensión | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio.
+4. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN
 
 ### Reglas Críticas
 
