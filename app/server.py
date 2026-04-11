@@ -158,36 +158,99 @@ def md_to_pdf(md_text: str, output_path: str):
     """Convert Markdown text to a PDF file using markdown and xhtml2pdf."""
     html_content = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
     
-    # Simple CSS to make tables look good
+    # Enhanced CSS with landscape orientation for tables and better formatting
     html_with_css = f"""
     <html>
     <head>
     <style>
         @page {{
-            size: A4;
-            margin: 2cm;
+            size: A4 landscape;
+            margin: 1.5cm;
         }}
         body {{ 
             font-family: Helvetica, Arial, sans-serif; 
-            font-size: 12px;
+            font-size: 10px;
             color: #333;
+            line-height: 1.4;
         }}
-        h1, h2, h3 {{ color: #0056b3; }}
+        h1 {{ 
+            color: #0056b3; 
+            font-size: 18px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+            page-break-after: avoid;
+        }}
+        h2 {{ 
+            color: #0056b3; 
+            font-size: 14px;
+            margin-top: 12px;
+            margin-bottom: 8px;
+            page-break-after: avoid;
+        }}
+        h3 {{ 
+            color: #0056b3; 
+            font-size: 12px;
+            margin-top: 10px;
+            margin-bottom: 6px;
+            page-break-after: avoid;
+        }}
+        p {{
+            margin-bottom: 8px;
+        }}
         table {{ 
             border-collapse: collapse; 
             width: 100%; 
-            margin-bottom: 20px;
+            margin-bottom: 15px;
+            margin-top: 10px;
+            font-size: 9px;
+            page-break-inside: avoid;
         }}
         th, td {{ 
-            border: 1px solid #ddd; 
-            padding: 8px; 
-            text-align: left; 
+            border: 1px solid #999; 
+            padding: 6px 8px; 
+            text-align: left;
+            vertical-align: top;
+            word-wrap: break-word;
         }}
         th {{ 
-            background-color: #f4f6f8; 
+            background-color: #0056b3; 
+            color: white;
             font-weight: bold;
+            font-size: 10px;
         }}
-        tr:nth-child(even) {{ background-color: #f9f9f9; }}
+        tr:nth-child(even) {{ 
+            background-color: #f5f5f5; 
+        }}
+        tr:nth-child(odd) {{ 
+            background-color: #ffffff; 
+        }}
+        /* Prevent page breaks inside table rows */
+        tr {{
+            page-break-inside: avoid;
+        }}
+        /* Better list formatting */
+        ul, ol {{
+            margin-left: 20px;
+            margin-bottom: 10px;
+        }}
+        li {{
+            margin-bottom: 4px;
+        }}
+        /* Code blocks */
+        code {{
+            background-color: #f4f4f4;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+        }}
+        pre {{
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 9px;
+        }}
     </style>
     </head>
     <body>
@@ -418,7 +481,9 @@ def _needs_generator_action(user_msg: str, response: str) -> bool:
     keywords = ["generar rúbrica", "crear rúbrica", "generar rubrica", "crear rubrica",
                  "genera una rúbrica", "necesito una rúbrica", "ACTION:GENERATOR"]
     msg_lower = user_msg.lower()
-    return any(k in msg_lower or k in response for k in keywords)
+    response_lower = response.lower()
+    # Only trigger if keywords are in user message OR explicitly in response
+    return any(k in msg_lower for k in keywords) or "ACTION:GENERATOR" in response
 
 
 def _needs_evaluator_action(user_msg: str, response: str) -> bool:
@@ -426,7 +491,9 @@ def _needs_evaluator_action(user_msg: str, response: str) -> bool:
     keywords = ["evaluar documento", "evaluar un documento", "evaluación",
                  "evaluar cumplimiento", "ACTION:EVALUATOR"]
     msg_lower = user_msg.lower()
-    return any(k in msg_lower or k in response for k in keywords)
+    response_lower = response.lower()
+    # Only trigger if keywords are in user message OR explicitly in response
+    return any(k in msg_lower for k in keywords) or "ACTION:EVALUATOR" in response
 
 
 # ============================================================================
@@ -547,7 +614,8 @@ async def upload_doc(file: UploadFile = File(...)):
 
 @app.post("/api/evaluate/run")
 async def run_evaluation(request: EvaluateRequest):
-    """Run evaluation: compare a document against a rubric."""
+    """Run evaluation: compare a document against a rubric using the evaluador-de-cumplimiento skill."""
+    # Verify files exist
     rubric_path = None
     for ext in [".pdf", ".txt", ".md"]:
         candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
@@ -562,87 +630,28 @@ async def run_evaluation(request: EvaluateRequest):
     if not doc_path.exists():
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    if rubric_path.suffix.lower() == ".pdf":
-        rubric_text = extract_text_from_pdf(str(rubric_path))
-        if not rubric_text.strip():
-            raise HTTPException(status_code=400, detail="No se pudo extraer texto de la rúbrica PDF")
-    else:
-        rubric_text = rubric_path.read_text(encoding="utf-8")
-    document_text = extract_text_from_pdf(str(doc_path))
-    if not document_text.strip():
-        raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento PDF")
+    logger.info(f"📋 Starting evaluation via skill: rubric={request.rubric_id}, doc={request.doc_id}")
 
-    logger.info(f"📋 Evaluating: rubric={len(rubric_text)} chars, doc={len(document_text)} chars")
-
-    # Build the evaluation message with inline text
+    # Build the message for the evaluator skill
+    # The skill will use its tools to read the files and optionally query Qdrant
     agent_message = (
-        f"Evalúa el siguiente documento usando esta rúbrica de cumplimiento.\n\n"
-        f"--- RÚBRICA ---\n{rubric_text[:20000]}\n\n"
-        f"--- DOCUMENTO A EVALUAR ---\n{document_text[:30000]}"
+        f"Evalúa el documento contra la rúbrica de cumplimiento.\n\n"
+        f"IDs de archivos:\n"
+        f"- rubric_id: {request.rubric_id}\n"
+        f"- document_id: {request.doc_id}\n\n"
+        f"Usa las herramientas `leer_rubrica_subida` y `leer_documento_subido` para obtener el contenido. "
+        f"Si encuentras referencias a normativas externas en el documento, usa `buscar_contexto_qdrant` "
+        f"para enriquecer la evaluación con contexto normativo adicional."
     )
 
     try:
-        # Use a dedicated evaluator agent to bypass orchestrator transfer issues.
-        # The orchestrator's transfer mechanism was failing silently (only one
-        # model call, no text output). Running the evaluator directly is more
-        # reliable since we already know which agent to use.
-        from google.adk.agents import Agent
+        # Use the root agent runner (which has access to all skills including evaluador-de-cumplimiento)
+        eval_text = await run_agent(agent_message)
 
-        evaluator_agent = Agent(
-            name="evaluador_directo",
-            model="gemini-2.5-flash",
-            instruction=(
-                "Eres un experto en auditoría y cumplimiento normativo. "
-                "Tu tarea es evaluar un documento contra una rúbrica de cumplimiento.\n\n"
-                "Para cada criterio de la rúbrica, determina:\n"
-                "- **Estado:** Cumple / No Cumple / Parcialmente Cumple\n"
-                "- **Evidencia:** Cita textual del documento que justifica el estado\n"
-                "- **Observaciones:** Explicación de por qué se asignó ese estado\n"
-                "- **Recomendación:** Qué debe cambiar para mejorar\n\n"
-                "Al final, presenta un informe con:\n"
-                "1. Resumen Ejecutivo (puntaje global o porcentaje de cumplimiento)\n"
-                "2. Detalle por Criterio. ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN.\n"
-                "   Las columnas de la tabla DEBEN ser: Dimensión | Criterio de Evaluación | Estado | Evidencia (Cita Textual) | Observaciones | Recomendación.\n"
-                "   ASEGÚRATE de que cada fila tenga exactamente 6 celdas separadas por |.\n"
-                "   ASEGÚRATE de que la línea separadora (-----|-----|...) tenga también 6 secciones.\n"
-                "3. Conclusiones y próximos pasos\n\n"
-                "Sé riguroso, objetivo y profesional. Basa tus comentarios "
-                "exclusivamente en la evidencia del documento."
-            ),
-        )
+        if not eval_text or eval_text == "Sin respuesta del agente.":
+            raise HTTPException(status_code=500, detail="El evaluador no generó respuesta")
 
-        eval_session_service = InMemorySessionService()
-        eval_runner = Runner(
-            agent=evaluator_agent,
-            app_name="rubricai_evaluator",
-            session_service=eval_session_service,
-        )
-
-        eval_sid = str(uuid.uuid4())
-        await eval_session_service.create_session(
-            app_name="rubricai_evaluator",
-            user_id=USER_ID,
-            session_id=eval_sid,
-        )
-
-        user_content = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=agent_message)]
-        )
-
-        response_parts = []
-        async for event in eval_runner.run_async(
-            user_id=USER_ID,
-            session_id=eval_sid,
-            new_message=user_content,
-        ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        response_parts.append(part.text)
-
-        eval_text = "\n".join(response_parts) if response_parts else "Sin respuesta del evaluador."
-
+        # Save results
         output_filename_txt = f"evaluacion_{request.doc_id[:8]}.txt"
         output_path_txt = OUTPUT_DIR / output_filename_txt
         with open(output_path_txt, "w", encoding="utf-8") as f:
@@ -653,7 +662,7 @@ async def run_evaluation(request: EvaluateRequest):
         output_path_pdf = OUTPUT_DIR / output_filename_pdf
         md_to_pdf(eval_text, str(output_path_pdf))
 
-        logger.info(f"✅ Evaluation completed and saved to PDF: {output_filename_pdf}")
+        logger.info(f"✅ Evaluation completed via skill and saved to PDF: {output_filename_pdf}")
 
         return {
             "result": eval_text,

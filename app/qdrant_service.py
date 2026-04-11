@@ -372,6 +372,7 @@ def leer_rubrica_subida(rubric_id: str) -> str:
 
     Use this tool when you need to access the text of a rubric that the user
     uploaded through the UI. The rubric_id is provided by the frontend after upload.
+    Supports PDF, TXT, and MD formats.
 
     Args:
         rubric_id: The unique ID of the uploaded rubric (provided after upload).
@@ -383,14 +384,31 @@ def leer_rubrica_subida(rubric_id: str) -> str:
 
     upload_dir = Path("/tmp/rubricas_uploads")
 
-    # Try common extensions
-    for ext in [".txt", ".md"]:
+    # Try common extensions (including PDF)
+    for ext in [".pdf", ".txt", ".md"]:
         rubric_path = upload_dir / f"rubric_{rubric_id}{ext}"
         if rubric_path.exists():
             try:
-                text = rubric_path.read_text(encoding="utf-8")
+                # Handle PDF extraction
+                if ext == ".pdf":
+                    import pypdf
+                    reader = pypdf.PdfReader(str(rubric_path))
+                    text_parts = []
+                    for page in reader.pages:
+                        text = page.extract_text()
+                        if text:
+                            text_parts.append(text)
+                    text = "\n".join(text_parts)
+                    if not text.strip():
+                        return "⚠️ El PDF de la rúbrica no contiene texto extraíble."
+                else:
+                    # Handle text files
+                    text = rubric_path.read_text(encoding="utf-8")
+                
                 logger.info(f"📖 Rubric read: rubric_{rubric_id}{ext} ({len(text)} chars)")
                 return text
+            except ImportError:
+                return "❌ pypdf no está instalado. No se puede leer PDFs."
             except Exception as e:
                 return f"❌ Error leyendo rúbrica: {str(e)}"
 
