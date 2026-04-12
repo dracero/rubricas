@@ -372,7 +372,7 @@ def leer_rubrica_subida(rubric_id: str) -> str:
 
     Use this tool when you need to access the text of a rubric that the user
     uploaded through the UI. The rubric_id is provided by the frontend after upload.
-    Supports PDF, TXT, and MD formats.
+    Supports DOCX, PDF, TXT, and MD formats.
 
     Args:
         rubric_id: The unique ID of the uploaded rubric (provided after upload).
@@ -384,31 +384,43 @@ def leer_rubrica_subida(rubric_id: str) -> str:
 
     upload_dir = Path("/tmp/rubricas_uploads")
 
-    # Try common extensions (including PDF)
-    for ext in [".pdf", ".txt", ".md"]:
+    # Try common extensions (including DOCX and PDF)
+    for ext in [".docx", ".pdf", ".txt", ".md"]:
         rubric_path = upload_dir / f"rubric_{rubric_id}{ext}"
         if rubric_path.exists():
             try:
-                # Handle PDF extraction
-                if ext == ".pdf":
+                if ext == ".docx":
+                    from docx import Document
+                    doc = Document(str(rubric_path))
+                    text_parts = []
+                    for para in doc.paragraphs:
+                        if para.text.strip():
+                            text_parts.append(para.text)
+                    for table in doc.tables:
+                        for row in table.rows:
+                            row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                            text_parts.append(row_text)
+                    text = "\n".join(text_parts)
+                    if not text.strip():
+                        return "⚠️ El archivo DOCX de la rúbrica no contiene texto."
+                elif ext == ".pdf":
                     import pypdf
                     reader = pypdf.PdfReader(str(rubric_path))
                     text_parts = []
                     for page in reader.pages:
-                        text = page.extract_text()
-                        if text:
-                            text_parts.append(text)
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_parts.append(page_text)
                     text = "\n".join(text_parts)
                     if not text.strip():
                         return "⚠️ El PDF de la rúbrica no contiene texto extraíble."
                 else:
-                    # Handle text files
                     text = rubric_path.read_text(encoding="utf-8")
                 
                 logger.info(f"📖 Rubric read: rubric_{rubric_id}{ext} ({len(text)} chars)")
                 return text
-            except ImportError:
-                return "❌ pypdf no está instalado. No se puede leer PDFs."
+            except ImportError as ie:
+                return f"❌ Dependencia faltante para leer {ext}: {str(ie)}"
             except Exception as e:
                 return f"❌ Error leyendo rúbrica: {str(e)}"
 

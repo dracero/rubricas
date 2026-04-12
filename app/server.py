@@ -37,7 +37,6 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 import markdown
-from xhtml2pdf import pisa
 
 
 logging.basicConfig(level=logging.INFO)
@@ -154,115 +153,143 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         raise HTTPException(status_code=500, detail=f"Error reading PDF: {str(e)}")
 
 
-def md_to_pdf(md_text: str, output_path: str):
-    """Convert Markdown text to a PDF file using markdown and xhtml2pdf."""
-    html_content = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
-    
-    # Enhanced CSS with landscape orientation for tables and better formatting
-    html_with_css = f"""
-    <html>
-    <head>
-    <style>
-        @page {{
-            size: A4 landscape;
-            margin: 1.5cm;
-        }}
-        body {{ 
-            font-family: Helvetica, Arial, sans-serif; 
-            font-size: 10px;
-            color: #333;
-            line-height: 1.4;
-        }}
-        h1 {{ 
-            color: #0056b3; 
-            font-size: 18px;
-            margin-top: 10px;
-            margin-bottom: 10px;
-            page-break-after: avoid;
-        }}
-        h2 {{ 
-            color: #0056b3; 
-            font-size: 14px;
-            margin-top: 12px;
-            margin-bottom: 8px;
-            page-break-after: avoid;
-        }}
-        h3 {{ 
-            color: #0056b3; 
-            font-size: 12px;
-            margin-top: 10px;
-            margin-bottom: 6px;
-            page-break-after: avoid;
-        }}
-        p {{
-            margin-bottom: 8px;
-        }}
-        table {{ 
-            border-collapse: collapse; 
-            width: 100%; 
-            margin-bottom: 15px;
-            margin-top: 10px;
-            font-size: 9px;
-            page-break-inside: avoid;
-        }}
-        th, td {{ 
-            border: 1px solid #999; 
-            padding: 6px 8px; 
-            text-align: left;
-            vertical-align: top;
-            word-wrap: break-word;
-        }}
-        th {{ 
-            background-color: #0056b3; 
-            color: white;
-            font-weight: bold;
-            font-size: 10px;
-        }}
-        tr:nth-child(even) {{ 
-            background-color: #f5f5f5; 
-        }}
-        tr:nth-child(odd) {{ 
-            background-color: #ffffff; 
-        }}
-        /* Prevent page breaks inside table rows */
-        tr {{
-            page-break-inside: avoid;
-        }}
-        /* Better list formatting */
-        ul, ol {{
-            margin-left: 20px;
-            margin-bottom: 10px;
-        }}
-        li {{
-            margin-bottom: 4px;
-        }}
-        /* Code blocks */
-        code {{
-            background-color: #f4f4f4;
-            padding: 2px 4px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-            font-size: 9px;
-        }}
-        pre {{
-            background-color: #f4f4f4;
-            padding: 10px;
-            border-radius: 5px;
-            overflow-x: auto;
-            font-size: 9px;
-        }}
-    </style>
-    </head>
-    <body>
-    {html_content}
-    </body>
-    </html>
-    """
-    
-    with open(output_path, "wb") as pdf_file:
-        pisa_status = pisa.CreatePDF(html_with_css, dest=pdf_file)
-        if pisa_status.err:
-            logger.error(f"Error creating PDF: {pisa_status.err}")
+def md_to_docx(md_text: str, output_path: str):
+    """Convert Markdown text to a Word .docx file using python-docx."""
+    import re
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    doc = Document()
+
+    # Set default font
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'Calibri'
+    font.size = Pt(10)
+
+    # Set narrow margins
+    for section in doc.sections:
+        section.left_margin = Inches(0.6)
+        section.right_margin = Inches(0.6)
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
+        section.page_width = Inches(11)   # Landscape
+        section.page_height = Inches(8.5)
+
+    lines = md_text.split('\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Headers
+        if stripped.startswith('# '):
+            level = 0
+            text = stripped
+            while text.startswith('#'):
+                level += 1
+                text = text[1:]
+            text = text.strip()
+            heading_level = min(level, 4)
+            doc.add_heading(text, level=heading_level)
+            i += 1
+            continue
+
+        # Table detection: line starts with | and next line has |---|
+        if stripped.startswith('|') and i + 1 < len(lines) and re.match(r'^\s*\|[\s\-:|]+\|', lines[i + 1]):
+            # Parse table
+            header_line = stripped
+            separator_line = lines[i + 1].strip()
+            
+            # Parse header cells
+            headers = [c.strip() for c in header_line.strip('|').split('|')]
+            headers = [h for h in headers if h != '']
+            
+            # Collect data rows
+            data_rows = []
+            j = i + 2
+            while j < len(lines) and lines[j].strip().startswith('|'):
+                row_cells = [c.strip() for c in lines[j].strip().strip('|').split('|')]
+                row_cells = [c for c in row_cells if c != '']
+                data_rows.append(row_cells)
+                j += 1
+
+            num_cols = len(headers)
+            num_rows = 1 + len(data_rows)
+
+            table = doc.add_table(rows=num_rows, cols=num_cols)
+            table.style = 'Table Grid'
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            # Header row
+            for ci, header_text in enumerate(headers):
+                cell = table.rows[0].cells[ci]
+                cell.text = ''
+                p = cell.paragraphs[0]
+                run = p.add_run(header_text)
+                run.bold = True
+                run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor(255, 255, 255)
+                from docx.oxml.ns import qn
+                shading = cell._element.get_or_add_tcPr()
+                shading_elem = shading.makeelement(qn('w:shd'), {
+                    qn('w:fill'): '0056B3',
+                    qn('w:val'): 'clear'
+                })
+                shading.append(shading_elem)
+
+            # Data rows
+            for ri, row_data in enumerate(data_rows):
+                for ci in range(min(len(row_data), num_cols)):
+                    cell = table.rows[ri + 1].cells[ci]
+                    cell.text = row_data[ci]
+                    for p in cell.paragraphs:
+                        for run in p.runs:
+                            run.font.size = Pt(9)
+
+            doc.add_paragraph('')  # spacing after table
+            i = j
+            continue
+
+        # Bullet lists
+        if stripped.startswith('- ') or stripped.startswith('* '):
+            text = stripped[2:].strip()
+            # Handle bold markers
+            text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+            p = doc.add_paragraph(text, style='List Bullet')
+            p.paragraph_format.space_after = Pt(2)
+            i += 1
+            continue
+
+        # Numbered lists
+        if re.match(r'^\d+\.\s', stripped):
+            text = re.sub(r'^\d+\.\s*', '', stripped)
+            text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+            p = doc.add_paragraph(text, style='List Number')
+            p.paragraph_format.space_after = Pt(2)
+            i += 1
+            continue
+
+        # Empty lines
+        if not stripped:
+            i += 1
+            continue
+
+        # Regular paragraph (handle bold)
+        p = doc.add_paragraph()
+        parts = re.split(r'(\*\*.+?\*\*)', stripped)
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'):
+                run = p.add_run(part[2:-2])
+                run.bold = True
+            else:
+                p.add_run(part)
+        i += 1
+
+    doc.save(output_path)
+    logger.info(f"✅ Word document saved: {output_path}")
 
 
 
@@ -549,16 +576,16 @@ async def generate_rubric(request: GenerateRequest):
         with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(rubric_text)
 
-        # Generate PDF version
-        output_filename_pdf = f"rubrica_{request.document_id[:8]}.pdf"
-        output_path_pdf = OUTPUT_DIR / output_filename_pdf
-        md_to_pdf(rubric_text, str(output_path_pdf))
+        # Generate Word version
+        output_filename_docx = f"rubrica_{request.document_id[:8]}.docx"
+        output_path_docx = OUTPUT_DIR / output_filename_docx
+        md_to_docx(rubric_text, str(output_path_docx))
 
-        logger.info(f"✅ Rubric generated and saved to PDF: {output_filename_pdf}")
+        logger.info(f"✅ Rubric generated and saved to Word: {output_filename_docx}")
 
         return {
             "result": rubric_text,
-            "download_url": f"/api/download/{output_filename_pdf}",
+            "download_url": f"/api/download/{output_filename_docx}",
         }
 
     except Exception as e:
@@ -568,14 +595,23 @@ async def generate_rubric(request: GenerateRequest):
 
 @app.get("/api/download/{filename}")
 async def download_file(filename: str):
-    """Download a generated rubric file."""
+    """Download a generated file (Word, PDF, or text)."""
     file_path = OUTPUT_DIR / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    
+    ext = Path(filename).suffix.lower()
+    media_types = {
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pdf": "application/pdf",
+        ".md": "text/markdown",
+    }
+    media_type = media_types.get(ext, "text/plain")
+    
     return FileResponse(
         path=str(file_path),
         filename=filename,
-        media_type="text/plain",
+        media_type=media_type,
     )
 
 
@@ -588,7 +624,7 @@ async def upload_rubric(file: UploadFile = File(...)):
     """Upload a rubric file for evaluation."""
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
-    if ext not in [".txt", ".md", ".pdf"]:
+    if ext not in [".txt", ".md", ".pdf", ".docx"]:
         ext = ".txt"
     file_path = UPLOAD_DIR / f"rubric_{file_id}{ext}"
 
@@ -617,7 +653,7 @@ async def run_evaluation(request: EvaluateRequest):
     """Run evaluation: compare a document against a rubric using the evaluador-de-cumplimiento skill."""
     # Verify files exist
     rubric_path = None
-    for ext in [".pdf", ".txt", ".md"]:
+    for ext in [".docx", ".pdf", ".txt", ".md"]:
         candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
         if candidate.exists():
             rubric_path = candidate
@@ -657,16 +693,16 @@ async def run_evaluation(request: EvaluateRequest):
         with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(eval_text)
 
-        # Generate PDF version
-        output_filename_pdf = f"evaluacion_{request.doc_id[:8]}.pdf"
-        output_path_pdf = OUTPUT_DIR / output_filename_pdf
-        md_to_pdf(eval_text, str(output_path_pdf))
+        # Generate Word version
+        output_filename_docx = f"evaluacion_{request.doc_id[:8]}.docx"
+        output_path_docx = OUTPUT_DIR / output_filename_docx
+        md_to_docx(eval_text, str(output_path_docx))
 
-        logger.info(f"✅ Evaluation completed via skill and saved to PDF: {output_filename_pdf}")
+        logger.info(f"✅ Evaluation completed via skill and saved to Word: {output_filename_docx}")
 
         return {
             "result": eval_text,
-            "download_url": f"/api/download/{output_filename_pdf}",
+            "download_url": f"/api/download/{output_filename_docx}",
         }
 
     except Exception as e:

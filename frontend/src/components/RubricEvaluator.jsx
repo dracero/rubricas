@@ -100,7 +100,7 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Rubric Upload */}
                     <div>
                             <p className="text-sm font-medium text-gray-700 mb-2">
-                            Rúbrica de Referencia (.txt/.md/.pdf)
+                            Rúbrica de Referencia (.docx/.txt/.md/.pdf)
                             </p>
                             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
                                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
@@ -113,7 +113,7 @@ const RubricEvaluator = ({ onComplete }) => {
                                 <input 
                                     type="file" 
                                     className="hidden" 
-                                    accept=".txt,.md,.pdf" 
+                                    accept=".docx,.txt,.md,.pdf" 
                                     onChange={(e) => setRubricFile(e.target.files[0])} 
                                 />
                         </label>
