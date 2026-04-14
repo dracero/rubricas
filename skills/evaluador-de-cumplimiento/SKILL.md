@@ -4,7 +4,7 @@ description: >
   Evalúa documentos (PDF) contra una rúbrica específica cargada por el usuario.
   Guía al usuario para subir la rúbrica y el documento, extrae contexto de Qdrant
   y genera un informe de evaluación detallado.
-model: gemini-2.5-flash
+model: openai/gpt-4o-mini
 tools:
   - leer_rubrica_subida
   - leer_documento_subido

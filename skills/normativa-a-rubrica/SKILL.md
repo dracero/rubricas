@@ -4,7 +4,7 @@ description: >
   Genera rúbricas de cumplimiento normativo a partir de documentos normativos PDF.
   Guía al usuario paso a paso: solicita el PDF, extrae ontología, la guarda en Qdrant,
   genera la rúbrica y proporciona el archivo para descarga.
-model: gemini-2.5-flash
+model: openai/gpt-4o-mini
 tools:
   - guardar_ontologia_en_qdrant
   - buscar_contexto_qdrant

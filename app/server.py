@@ -15,8 +15,22 @@ import uuid
 import shutil
 from pathlib import Path
 
+# Fix Windows console encoding
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
 from dotenv import load_dotenv
 load_dotenv()
+
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,15 +43,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from common.config import setup_langsmith
 from app.main_agent import create_root_agent
-from app.qdrant_service import TOOL_REGISTRY
+from app.qdrant_service import TOOL_REGISTRY, _get_qdrant_service
 from app.skill_loader import load_skills
+from app.models import (
+    BatchUploadResponse, FileInfo, RejectedFile,
+    BatchStatusResponse, DocumentStatus, DocumentReference, BatchSummary,
+    RubricSummary, RubricDetail, RubricListResponse,
+)
+from app.rubric_repository import _get_rubric_repository_service
+from app.batch_manager import get_batch_manager, ExtractionStatus
+from app.ontology_extractor import OntologyExtractor
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-import markdown
-from xhtml2pdf import pisa
+from app.docx_converter import md_to_docx, extract_text_from_docx, detect_rubric_in_response
 
 
 logging.basicConfig(level=logging.INFO)
@@ -47,14 +68,19 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ============================================================================
 
-UPLOAD_DIR = Path("/tmp/rubricas_uploads")
-OUTPUT_DIR = Path("/tmp/rubricas_output")
+import tempfile
+_tmp = Path(tempfile.gettempdir())
+UPLOAD_DIR = _tmp / "rubricas_uploads"
+OUTPUT_DIR = _tmp / "rubricas_output"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Skills directory
 SKILLS_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "skills"
 SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Mapping of file_id -> original filename for batch uploads
+_file_id_to_filename: Dict[str, str] = {}
 
 # ============================================================================
 # FastAPI App
@@ -125,7 +151,10 @@ class ChatResponse(BaseModel):
 class GenerateRequest(BaseModel):
     prompt: str
     level: str = "avanzado"
-    document_id: str
+    document_id: str = ""
+    document_ids: List[str] = []
+    base_rubric_id: Optional[str] = None
+    skip_search: bool = False
 
 
 class EvaluateRequest(BaseModel):
@@ -154,52 +183,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         raise HTTPException(status_code=500, detail=f"Error reading PDF: {str(e)}")
 
 
-def md_to_pdf(md_text: str, output_path: str):
-    """Convert Markdown text to a PDF file using markdown and xhtml2pdf."""
-    html_content = markdown.markdown(md_text, extensions=['tables', 'fenced_code'])
-    
-    # Simple CSS to make tables look good
-    html_with_css = f"""
-    <html>
-    <head>
-    <style>
-        @page {{
-            size: A4;
-            margin: 2cm;
-        }}
-        body {{ 
-            font-family: Helvetica, Arial, sans-serif; 
-            font-size: 12px;
-            color: #333;
-        }}
-        h1, h2, h3 {{ color: #0056b3; }}
-        table {{ 
-            border-collapse: collapse; 
-            width: 100%; 
-            margin-bottom: 20px;
-        }}
-        th, td {{ 
-            border: 1px solid #ddd; 
-            padding: 8px; 
-            text-align: left; 
-        }}
-        th {{ 
-            background-color: #f4f6f8; 
-            font-weight: bold;
-        }}
-        tr:nth-child(even) {{ background-color: #f9f9f9; }}
-    </style>
-    </head>
-    <body>
-    {html_content}
-    </body>
-    </html>
-    """
-    
-    with open(output_path, "wb") as pdf_file:
-        pisa_status = pisa.CreatePDF(html_with_css, dest=pdf_file)
-        if pisa_status.err:
-            logger.error(f"Error creating PDF: {pisa_status.err}")
+
 
 
 
@@ -360,17 +344,27 @@ async def root():
 # API Endpoints - Chat
 # ============================================================================
 
+# Module-level variable to persist chat session across messages
+_current_chat_session_id: Optional[str] = None
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Main chat endpoint — routes through the root agent."""
+    global _current_chat_session_id
+
     user_message = request.message.strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="Empty message")
 
     logger.info(f"📩 Chat received: {user_message[:80]}...")
 
+    # Persist session across chat messages for conversation continuity
+    if _current_chat_session_id is None:
+        _current_chat_session_id = str(uuid.uuid4())
+
     try:
-        response_text = await run_agent(user_message)
+        response_text = await run_agent(user_message, session_id=_current_chat_session_id)
     except Exception as e:
         logger.error(f"❌ Agent error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -380,6 +374,17 @@ async def chat(request: ChatRequest):
     # Detect action requests for frontend components
     response_type = "text"
     metadata = {"architecture": "skills"}
+
+    # Detect rubric in response and generate DOCX if found
+    if detect_rubric_in_response(response_text):
+        try:
+            docx_filename = f"rubrica_chat_{str(uuid.uuid4())[:8]}.docx"
+            md_to_docx(response_text, str(OUTPUT_DIR / docx_filename))
+            metadata["download_url"] = f"/api/download/{docx_filename}"
+            metadata["has_rubric"] = True
+            logger.info(f"📄 Rubric detected in chat response, DOCX generated: {docx_filename}")
+        except Exception as e:
+            logger.error(f"❌ Error generating DOCX from chat response: {e}")
 
     # explicitly check for UI tags
     if "[UI:RubricGenerator]" in response_text:
@@ -416,17 +421,21 @@ async def chat(request: ChatRequest):
 def _needs_generator_action(user_msg: str, response: str) -> bool:
     """Detect if the chat response should trigger the generator UI."""
     keywords = ["generar rúbrica", "crear rúbrica", "generar rubrica", "crear rubrica",
-                 "genera una rúbrica", "necesito una rúbrica", "ACTION:GENERATOR"]
+                 "genera una rúbrica", "necesito una rúbrica", "generar una rúbrica",
+                 "generar una rubrica", "quiero generar", "quiero crear una rúbrica",
+                 "generame una rúbrica", "generame una rubrica", "haceme una rúbrica",
+                 "haceme una rubrica", "armar una rúbrica", "armar una rubrica",
+                 "generar rúbricas", "generar rubricas"]
     msg_lower = user_msg.lower()
-    return any(k in msg_lower or k in response for k in keywords)
+    return any(k in msg_lower for k in keywords) or "ACTION:GENERATOR" in response
 
 
 def _needs_evaluator_action(user_msg: str, response: str) -> bool:
     """Detect if the chat response should trigger the evaluator UI."""
-    keywords = ["evaluar documento", "evaluar un documento", "evaluación",
-                 "evaluar cumplimiento", "ACTION:EVALUATOR"]
+    keywords = ["evaluar documento", "evaluar un documento",
+                 "evaluar cumplimiento"]
     msg_lower = user_msg.lower()
-    return any(k in msg_lower or k in response for k in keywords)
+    return any(k in msg_lower for k in keywords) or "ACTION:EVALUATOR" in response
 
 
 # ============================================================================
@@ -450,48 +459,406 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 # ============================================================================
+# API Endpoints - Batch Upload & Status
+# ============================================================================
+
+@app.post("/api/upload/batch", response_model=BatchUploadResponse)
+async def upload_batch(
+    files: List[UploadFile] = File(...),
+    batch_id: Optional[str] = None,
+    clear: bool = True,
+):
+    """Accept multiple PDF files, store them, and trigger async ontology extraction."""
+    accepted: List[FileInfo] = []
+    rejected: List[RejectedFile] = []
+
+    # Partition files into accepted (PDF) and rejected (non-PDF)
+    for file in files:
+        if file.filename and file.filename.lower().endswith(".pdf"):
+            file_id = str(uuid.uuid4())
+            file_path = UPLOAD_DIR / f"{file_id}.pdf"
+            with open(file_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            _file_id_to_filename[file_id] = file.filename
+            accepted.append(FileInfo(id=file_id, filename=file.filename))
+            logger.info(f"📤 Batch accepted: {file.filename} → {file_id}")
+        else:
+            rejected.append(
+                RejectedFile(
+                    filename=file.filename or "unknown",
+                    reason="Solo se aceptan archivos PDF",
+                )
+            )
+
+    bm = get_batch_manager()
+
+    if batch_id and bm.get_batch_status(batch_id):
+        # Append to existing batch — do NOT clear Qdrant
+        bm.add_documents_to_batch(
+            batch_id,
+            [f.id for f in accepted],
+            [f.filename for f in accepted],
+        )
+    else:
+        # New batch — create and optionally clear Qdrant
+        file_ids = [f.id for f in accepted]
+        filenames = [f.filename for f in accepted]
+        batch_id = bm.create_batch(file_ids, filenames)
+        if clear:
+            _get_qdrant_service().clear_collection()
+
+    # Spawn async extraction tasks for each accepted document
+    for info in accepted:
+        file_path = str(UPLOAD_DIR / f"{info.id}.pdf")
+        asyncio.create_task(
+            _process_document(batch_id, info.id, info.filename, file_path)
+        )
+
+    return BatchUploadResponse(
+        batch_id=batch_id,
+        accepted=accepted,
+        rejected=rejected,
+    )
+
+
+@app.get("/api/upload/status/{batch_id}", response_model=BatchStatusResponse)
+async def get_batch_status(batch_id: str):
+    """Return extraction status for each document in the batch."""
+    bm = get_batch_manager()
+    batch = bm.get_batch_status(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+
+    documents: List[DocumentStatus] = []
+    summary_counts: Dict[str, int] = {
+        "completado": 0,
+        "en_proceso": 0,
+        "error": 0,
+        "pendiente": 0,
+    }
+
+    for doc in batch.documents.values():
+        references = [
+            DocumentReference(type=r.type, text=r.text, url=r.url)
+            if isinstance(r, DocumentReference)
+            else DocumentReference(**r) if isinstance(r, dict) else r
+            for r in doc.references
+        ]
+        documents.append(
+            DocumentStatus(
+                id=doc.id,
+                filename=doc.filename,
+                status=doc.status.value,
+                entities_count=doc.entities_count,
+                relations_count=doc.relations_count,
+                error_message=doc.error_message,
+                references=references,
+            )
+        )
+        status_key = doc.status.value
+        if status_key in summary_counts:
+            summary_counts[status_key] += 1
+
+    return BatchStatusResponse(
+        batch_id=batch_id,
+        documents=documents,
+        summary=BatchSummary(
+            total=len(documents),
+            completado=summary_counts["completado"],
+            en_proceso=summary_counts["en_proceso"],
+            error=summary_counts["error"],
+            pendiente=summary_counts["pendiente"],
+        ),
+    )
+
+
+async def _process_document(
+    batch_id: str, doc_id: str, filename: str, file_path: str
+) -> None:
+    """Async extraction task for a single document within a batch.
+
+    Updates BatchManager status throughout the lifecycle and never raises —
+    any exception is caught and recorded as an ERROR status.
+    """
+    bm = get_batch_manager()
+    try:
+        bm.update_document_status(batch_id, doc_id, ExtractionStatus.EN_PROCESO)
+
+        # Extract text from PDF
+        text = extract_text_from_pdf(file_path)
+        if not text or not text.strip():
+            bm.update_document_status(
+                batch_id,
+                doc_id,
+                ExtractionStatus.ERROR,
+                error_message="Texto vacío o ilegible",
+            )
+            return
+
+        # Run ontology extraction
+        extractor = OntologyExtractor()
+        result = await extractor.extract(text, doc_id, filename)
+
+        if not result.success:
+            bm.update_document_status(
+                batch_id,
+                doc_id,
+                ExtractionStatus.ERROR,
+                error_message=result.error_message or "Error en extracción",
+            )
+            return
+
+        # Save ontology to Qdrant (additive within the batch)
+        _get_qdrant_service().save_ontology_additive(
+            result.ontologia, doc_id, filename
+        )
+
+        bm.update_document_status(
+            batch_id,
+            doc_id,
+            ExtractionStatus.COMPLETADO,
+            entities_count=result.entities_count,
+            relations_count=result.relations_count,
+            references=result.references,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Unhandled error processing document %s (%s): %s",
+            filename,
+            doc_id,
+            exc,
+        )
+        bm.update_document_status(
+            batch_id,
+            doc_id,
+            ExtractionStatus.ERROR,
+            error_message=str(exc),
+        )
+
+
+# ============================================================================
+# Multi-document concatenation helper
+# ============================================================================
+
+def _concatenate_documents(doc_ids: List[str], max_chars: int = 30000) -> str:
+    """Concatenate text from multiple documents with headers and proportional truncation.
+
+    For each document ID, looks up the PDF in UPLOAD_DIR and the original
+    filename from _file_id_to_filename.  Texts are joined with
+    ``--- DOCUMENTO: {filename} ---`` headers.
+
+    If the combined text exceeds *max_chars*, each document's allocation is
+    proportional to its original length (±1 char rounding tolerance).
+    """
+    texts: List[tuple[str, str]] = []  # (filename, extracted_text)
+    for doc_id in doc_ids:
+        pdf_path = UPLOAD_DIR / f"{doc_id}.pdf"
+        if not pdf_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Documento no encontrado: {doc_id}",
+            )
+        filename = _file_id_to_filename.get(doc_id, f"{doc_id}.pdf")
+        text = extract_text_from_pdf(str(pdf_path))
+        if text.strip():
+            texts.append((filename, text))
+
+    if not texts:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo extraer texto de ningún documento",
+        )
+
+    # Calculate total raw length (text only, without headers)
+    total_len = sum(len(t) for _, t in texts)
+
+    # Build header overhead so we can account for it
+    headers = [f"--- DOCUMENTO: {fn} ---\n" for fn, _ in texts]
+    header_overhead = sum(len(h) for h in headers)
+
+    if total_len + header_overhead <= max_chars:
+        # No truncation needed
+        parts = []
+        for (fn, text), header in zip(texts, headers):
+            parts.append(header + text)
+        return "\n".join(parts)
+
+    # Proportional truncation: distribute (max_chars - header_overhead) among docs
+    available = max(0, max_chars - header_overhead)
+    parts = []
+    for (fn, text), header in zip(texts, headers):
+        proportion = len(text) / total_len if total_len > 0 else 1.0 / len(texts)
+        alloc = int(proportion * available)
+        parts.append(header + text[:alloc])
+    return "\n".join(parts)
+
+
+# ============================================================================
 # API Endpoints - Generator
 # ============================================================================
 
 @app.post("/api/generate")
 async def generate_rubric(request: GenerateRequest):
-    """Generate a rubric from an uploaded PDF document."""
-    pdf_path = UPLOAD_DIR / f"{request.document_id}.pdf"
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="Documento no encontrado.")
+    """Generate a rubric from uploaded PDF document(s)."""
 
-    document_text = extract_text_from_pdf(str(pdf_path))
-    if not document_text.strip():
-        raise HTTPException(status_code=400, detail="No se pudo extraer texto del PDF")
+    # --- Multi-document path ---
+    if request.document_ids:
+        document_text = _concatenate_documents(request.document_ids)
+        logger.info(
+            f"📄 Concatenated {len(request.document_ids)} documents, "
+            f"{len(document_text)} chars"
+        )
+    else:
+        # --- Single-document backward-compat path ---
+        pdf_path = UPLOAD_DIR / f"{request.document_id}.pdf"
+        if not pdf_path.exists():
+            raise HTTPException(status_code=404, detail="Documento no encontrado.")
 
-    logger.info(f"📄 Extracted {len(document_text)} chars from PDF")
+        document_text = extract_text_from_pdf(str(pdf_path))
+        if not document_text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No se pudo extraer texto del PDF",
+            )
+        logger.info(f"📄 Extracted {len(document_text)} chars from PDF")
+        document_text = document_text[:30000]
 
-    # Build the message for the generator skill
+    # --- Semantic search for similar rubrics ---
+    if not request.skip_search:
+        try:
+            similar = _get_rubric_repository_service().search_similar(document_text[:3000])
+            if similar:
+                similar_rubrics = [
+                    RubricSummary(
+                        rubric_id=s["rubric_id"],
+                        summary=s["summary"],
+                        level=s["level"],
+                        source_filenames=s["source_filenames"],
+                        created_at=s["created_at"],
+                        score=s.get("score"),
+                    )
+                    for s in similar
+                ]
+                return {
+                    "result": "",
+                    "download_url": "",
+                    "similar_rubrics": [r.model_dump() for r in similar_rubrics],
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ Semantic search failed, proceeding with generation: {e}")
+
+    # --- Base rubric support ---
+    base_rubric_section = ""
+    if request.base_rubric_id:
+        base_rubric = _get_rubric_repository_service().get_rubric(request.base_rubric_id)
+        if not base_rubric:
+            raise HTTPException(status_code=404, detail="Rúbrica base no encontrada")
+        base_rubric_text = base_rubric.get("rubric_text", "")
+        base_rubric_section = (
+            f"\n\n--- RÚBRICA BASE DE REFERENCIA ---\n{base_rubric_text}\n\n"
+            f"Usa esta rúbrica como base y adaptala al nuevo documento."
+        )
+
+    # Build the message for a direct generator agent (bypasses orchestrator/skill transfers)
     agent_message = (
-        f"Por favor genera una rúbrica de cumplimiento a partir del siguiente "
-        f"documento normativo. Nivel de exigencia: {request.level}.\n\n"
+        f"Genera una rúbrica de cumplimiento normativo a partir del siguiente documento.\n"
+        f"Nivel de exigencia: {request.level}.\n"
         f"Instrucciones adicionales: {request.prompt}\n\n"
-        f"--- DOCUMENTO NORMATIVO ---\n{document_text[:30000]}"
+        f"--- TEXTO DEL DOCUMENTO NORMATIVO ---\n{document_text}"
+        f"{base_rubric_section}"
     )
 
     try:
-        rubric_text = await run_agent(agent_message)
+        # Use a dedicated generator agent to avoid orchestrator transfer issues
+        from google.adk.agents import Agent
+        from google.adk.models.lite_llm import LiteLlm
+
+        generator_agent = Agent(
+            name="generador_directo",
+            model=LiteLlm(model="openai/gpt-4o-mini"),
+            instruction=(
+                "Eres un ESPECIALISTA EN COMPLIANCE experto en diseño de instrumentos de evaluación normativa.\n\n"
+                "Tu tarea es generar una RÚBRICA DE CUMPLIMIENTO detallada a partir del texto de un documento normativo.\n\n"
+                "### Estructura obligatoria de la rúbrica\n\n"
+                "1. INFORMACIÓN GENERAL (Ámbito de Aplicación, Nivel de Criticidad, Objetivos)\n"
+                "2. ÁREAS DE CUMPLIMIENTO (Requisitos Legales, Operativos, Técnicos, etc.)\n"
+                "3. MATRIZ DE EVALUACIÓN. ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN.\n"
+                "   Las columnas de la tabla DEBEN ser: Dimensión | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio.\n"
+                "   ASEGÚRATE de que cada fila tenga exactamente 4 celdas separadas por |.\n"
+                "   ASEGÚRATE de que la línea separadora (-----|-----|...) tenga también 4 secciones.\n"
+                "4. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN\n\n"
+                "### Reglas Críticas\n"
+                "- NO uses términos vagos como 'efectivo' o 'adecuado' sin definirlos.\n"
+                "- Cada criterio debe tener EVIDENCIAS OBSERVABLES.\n"
+                "- Incluye REQUISITOS MÍNIMOS concretos para aprobar.\n"
+                "- Usa formato Markdown.\n"
+                "- Sé riguroso, objetivo y profesional.\n"
+                "- Responde SOLO con la rúbrica, sin conversación adicional."
+            ),
+        )
+
+        gen_session_service = InMemorySessionService()
+        gen_runner = Runner(
+            agent=generator_agent,
+            app_name="rubricai_generator",
+            session_service=gen_session_service,
+        )
+
+        gen_sid = str(uuid.uuid4())
+        await gen_session_service.create_session(
+            app_name="rubricai_generator",
+            user_id=USER_ID,
+            session_id=gen_sid,
+        )
+
+        user_content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=agent_message)]
+        )
+
+        response_parts = []
+        async for event in gen_runner.run_async(
+            user_id=USER_ID,
+            session_id=gen_sid,
+            new_message=user_content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        response_parts.append(part.text)
+
+        rubric_text = "\n".join(response_parts) if response_parts else "Sin respuesta del generador."
+
+        # Clean any UI tags from the response
+        rubric_text = rubric_text.replace("[UI:RubricGenerator]", "").replace("[UI:RubricEvaluator]", "").strip()
 
         output_filename_txt = f"rubrica_{request.document_id[:8]}.txt"
         output_path_txt = OUTPUT_DIR / output_filename_txt
         with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(rubric_text)
 
-        # Generate PDF version
-        output_filename_pdf = f"rubrica_{request.document_id[:8]}.pdf"
-        output_path_pdf = OUTPUT_DIR / output_filename_pdf
-        md_to_pdf(rubric_text, str(output_path_pdf))
+        # Generate DOCX version
+        output_filename_docx = f"rubrica_{request.document_id[:8]}.docx"
+        output_path_docx = OUTPUT_DIR / output_filename_docx
+        md_to_docx(rubric_text, str(output_path_docx))
 
-        logger.info(f"✅ Rubric generated and saved to PDF: {output_filename_pdf}")
+        logger.info(f"✅ Rubric generated and saved to DOCX: {output_filename_docx}")
+
+        # Store generated rubric in repository (fire-and-forget)
+        try:
+            doc_ids = request.document_ids if request.document_ids else [request.document_id]
+            source_filenames = [_file_id_to_filename.get(did, f"{did}.pdf") for did in doc_ids]
+            _get_rubric_repository_service().store_rubric(
+                rubric_text, request.level, source_filenames, doc_ids
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Failed to store rubric in repository: {e}")
 
         return {
             "result": rubric_text,
-            "download_url": f"/api/download/{output_filename_pdf}",
+            "download_url": f"/api/download/{output_filename_docx}",
+            "similar_rubrics": [],
         }
 
     except Exception as e:
@@ -505,11 +872,89 @@ async def download_file(filename: str):
     file_path = OUTPUT_DIR / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    # Detect file extension and set appropriate Content-Type
+    ext = Path(filename).suffix.lower()
+    if ext == ".docx":
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif ext == ".pdf":
+        media_type = "application/pdf"
+    else:
+        media_type = "text/plain"
+
     return FileResponse(
         path=str(file_path),
         filename=filename,
-        media_type="text/plain",
+        media_type=media_type,
     )
+
+
+# ============================================================================
+# API Endpoints - Rubric Repository
+# ============================================================================
+
+@app.get("/api/rubrics")
+async def list_rubrics(limit: int = 20, offset: int = 0, search: Optional[str] = None):
+    """List rubrics from the repository with optional semantic search."""
+    try:
+        rubrics, total = _get_rubric_repository_service().list_rubrics(limit, offset, search)
+        items = [
+            RubricSummary(
+                rubric_id=r.get("rubric_id", ""),
+                summary=r.get("summary", ""),
+                level=r.get("level", ""),
+                source_filenames=r.get("source_filenames", []),
+                created_at=r.get("created_at", ""),
+                score=r.get("score"),
+            )
+            for r in rubrics
+        ]
+        return RubricListResponse(
+            rubrics=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        logger.error(f"❌ Error listing rubrics: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listando rúbricas: {str(e)}")
+
+
+@app.get("/api/rubrics/{rubric_id}")
+async def get_rubric(rubric_id: str):
+    """Retrieve a full rubric from the repository."""
+    rubric = _get_rubric_repository_service().get_rubric(rubric_id)
+    if not rubric:
+        raise HTTPException(status_code=404, detail="Rúbrica no encontrada")
+
+    # Generate DOCX
+    docx_filename = f"rubrica_repo_{rubric_id[:8]}.docx"
+    docx_path = OUTPUT_DIR / docx_filename
+    try:
+        md_to_docx(rubric.get("rubric_text", ""), str(docx_path))
+        download_url = f"/api/download/{docx_filename}"
+    except Exception as e:
+        logger.error(f"⚠️ Error generating DOCX for rubric {rubric_id}: {e}")
+        download_url = None
+
+    return RubricDetail(
+        rubric_id=rubric.get("rubric_id", rubric_id),
+        rubric_text=rubric.get("rubric_text", ""),
+        level=rubric.get("level", ""),
+        source_filenames=rubric.get("source_filenames", []),
+        source_document_ids=rubric.get("source_document_ids", []),
+        created_at=rubric.get("created_at", ""),
+        download_url=download_url,
+    )
+
+
+@app.delete("/api/rubrics/{rubric_id}")
+async def delete_rubric(rubric_id: str):
+    """Delete a rubric from the repository."""
+    deleted = _get_rubric_repository_service().delete_rubric(rubric_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Rúbrica no encontrada")
+    return {"message": f"Rúbrica {rubric_id} eliminada exitosamente"}
 
 
 # ============================================================================
@@ -521,7 +966,7 @@ async def upload_rubric(file: UploadFile = File(...)):
     """Upload a rubric file for evaluation."""
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
-    if ext not in [".txt", ".md", ".pdf"]:
+    if ext not in [".txt", ".md", ".pdf", ".docx"]:
         ext = ".txt"
     file_path = UPLOAD_DIR / f"rubric_{file_id}{ext}"
 
@@ -536,7 +981,10 @@ async def upload_rubric(file: UploadFile = File(...)):
 async def upload_doc(file: UploadFile = File(...)):
     """Upload a document for evaluation."""
     file_id = str(uuid.uuid4())
-    file_path = UPLOAD_DIR / f"doc_{file_id}.pdf"
+    ext = Path(file.filename).suffix.lower()
+    if ext not in [".pdf", ".docx"]:
+        ext = ".pdf"
+    file_path = UPLOAD_DIR / f"doc_{file_id}{ext}"
 
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -549,7 +997,7 @@ async def upload_doc(file: UploadFile = File(...)):
 async def run_evaluation(request: EvaluateRequest):
     """Run evaluation: compare a document against a rubric."""
     rubric_path = None
-    for ext in [".pdf", ".txt", ".md"]:
+    for ext in [".pdf", ".txt", ".md", ".docx"]:
         candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
         if candidate.exists():
             rubric_path = candidate
@@ -558,17 +1006,31 @@ async def run_evaluation(request: EvaluateRequest):
     if not rubric_path:
         raise HTTPException(status_code=404, detail="Rúbrica no encontrada")
 
-    doc_path = UPLOAD_DIR / f"doc_{request.doc_id}.pdf"
-    if not doc_path.exists():
+    doc_path = None
+    for ext in [".pdf", ".docx"]:
+        candidate = UPLOAD_DIR / f"doc_{request.doc_id}{ext}"
+        if candidate.exists():
+            doc_path = candidate
+            break
+
+    if not doc_path:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
     if rubric_path.suffix.lower() == ".pdf":
         rubric_text = extract_text_from_pdf(str(rubric_path))
         if not rubric_text.strip():
             raise HTTPException(status_code=400, detail="No se pudo extraer texto de la rúbrica PDF")
+    elif rubric_path.suffix.lower() == ".docx":
+        rubric_text = extract_text_from_docx(str(rubric_path))
+        if not rubric_text.strip():
+            raise HTTPException(status_code=400, detail="No se pudo extraer texto de la rúbrica DOCX")
     else:
         rubric_text = rubric_path.read_text(encoding="utf-8")
-    document_text = extract_text_from_pdf(str(doc_path))
+
+    if doc_path.suffix.lower() == ".docx":
+        document_text = extract_text_from_docx(str(doc_path))
+    else:
+        document_text = extract_text_from_pdf(str(doc_path))
     if not document_text.strip():
         raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento PDF")
 
@@ -587,10 +1049,11 @@ async def run_evaluation(request: EvaluateRequest):
         # model call, no text output). Running the evaluator directly is more
         # reliable since we already know which agent to use.
         from google.adk.agents import Agent
+        from google.adk.models.lite_llm import LiteLlm
 
         evaluator_agent = Agent(
             name="evaluador_directo",
-            model="gemini-2.5-flash",
+            model=LiteLlm(model="openai/gpt-4o-mini"),
             instruction=(
                 "Eres un experto en auditoría y cumplimiento normativo. "
                 "Tu tarea es evaluar un documento contra una rúbrica de cumplimiento.\n\n"
@@ -648,16 +1111,16 @@ async def run_evaluation(request: EvaluateRequest):
         with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(eval_text)
 
-        # Generate PDF version
-        output_filename_pdf = f"evaluacion_{request.doc_id[:8]}.pdf"
-        output_path_pdf = OUTPUT_DIR / output_filename_pdf
-        md_to_pdf(eval_text, str(output_path_pdf))
+        # Generate DOCX version
+        output_filename_docx = f"evaluacion_{request.doc_id[:8]}.docx"
+        output_path_docx = OUTPUT_DIR / output_filename_docx
+        md_to_docx(eval_text, str(output_path_docx))
 
-        logger.info(f"✅ Evaluation completed and saved to PDF: {output_filename_pdf}")
+        logger.info(f"✅ Evaluation completed and saved to DOCX: {output_filename_docx}")
 
         return {
             "result": eval_text,
-            "download_url": f"/api/download/{output_filename_pdf}",
+            "download_url": f"/api/download/{output_filename_docx}",
         }
 
     except Exception as e:
@@ -727,7 +1190,7 @@ async def list_skills():
                 "filename": skill_name,  # We use skill_name as the ID in the frontend now
                 "name": fm.name,
                 "description": fm.description,
-                "model": fm.metadata.get("model", getattr(fm, "model", "gemini-2.5-flash")),
+                "model": fm.metadata.get("model", getattr(fm, "model", "openai/gpt-4o-mini")),
                 "tools": extra_tools,
                 "sub_agents": extra_sub,
             })

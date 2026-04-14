@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User, Bot, Sparkles } from 'lucide-react';
+import { Send, User, Bot, Sparkles, Download } from 'lucide-react';
 import RubricGenerator from './RubricGenerator';
 import RubricEvaluator from './RubricEvaluator';
 import { clsx } from 'clsx';
@@ -96,7 +96,21 @@ const ChatInterface = () => {
                 </div>
             );
         }
-        return <MarkdownTable content={msg.content} />;
+        return (
+            <div>
+                <MarkdownTable content={msg.content} />
+                {msg.metadata?.download_url && (
+                    <a
+                        href={msg.metadata.download_url}
+                        download
+                        className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition mt-3"
+                    >
+                        <Download className="w-4 h-4" />
+                        Descargar DOCX
+                    </a>
+                )}
+            </div>
+        );
     };
 
     return (

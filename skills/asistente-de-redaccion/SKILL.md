@@ -4,7 +4,7 @@ description: >
   Asistente de orientación para la redacción de documentos normativos y técnicos.
   Utiliza Qdrant para recuperar requisitos y mejores prácticas, ofreciendo
   recomendaciones en tiempo real para asegurar el cumplimiento y la calidad.
-model: gemini-2.5-flash
+model: openai/gpt-4o-mini
 tools:
   - buscar_contexto_qdrant
   - leer_documento_subido

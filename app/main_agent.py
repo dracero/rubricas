@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from google.adk.agents import Agent
+from google.adk.models.lite_llm import LiteLlm
 
 from app.skill_loader import load_skills
 from app.qdrant_service import TOOL_REGISTRY
@@ -76,7 +77,7 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
     # Create root orchestrator agent
     root_agent = Agent(
         name="rubricai_orchestrator",
-        model="gemini-2.5-flash",
+        model=LiteLlm(model="openai/gpt-4o-mini"),
         instruction=(
             "Eres el orquestador del sistema RubricAI de cumplimiento normativo.\n\n"
             f"{routing_instructions}"

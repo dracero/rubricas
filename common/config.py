@@ -4,11 +4,26 @@ Provides environment loading, configuration classes, and observability setup.
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 from typing import Any, Optional
 from functools import wraps
 import time
+
+# Fix Windows console encoding: set env var for subprocesses and
+# reconfigure stdout/stderr for the current process.
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -167,10 +182,13 @@ class ConfiguracionColaba:
         self.QDRANT_URL = get_env_var("QDRANT_URL")
         self.QDRANT_API_KEY = get_env_var("QDRANT_API_KEY") or get_env_var("QDRANT_KEY")
         self.QDRANT_KEY = self.QDRANT_API_KEY # Alias for backward compatibility
+        self.OPENAI_API_KEY = get_env_var("OPENAI_API_KEY")
         
         # Validación
         if not self.GOOGLE_API_KEY:
             raise ValueError("❌ Falta GOOGLE_API_KEY. Verifique su archivo .env")
+        if not self.OPENAI_API_KEY:
+            logging.warning("⚠️ OPENAI_API_KEY no encontrada en .env. Las funciones que usan OpenAI/LiteLLM no estarán disponibles.")
         if not self.QDRANT_URL:
             # Check for memory mode implied by local URL or empty
             pass

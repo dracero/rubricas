@@ -100,7 +100,7 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Rubric Upload */}
                     <div>
                             <p className="text-sm font-medium text-gray-700 mb-2">
-                            Rúbrica de Referencia (.txt/.md/.pdf)
+                            Rúbrica de Referencia (.txt/.md/.pdf/.docx)
                             </p>
                             <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
                                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
@@ -113,7 +113,7 @@ const RubricEvaluator = ({ onComplete }) => {
                                 <input 
                                     type="file" 
                                     className="hidden" 
-                                    accept=".txt,.md,.pdf" 
+                                    accept=".txt,.md,.pdf,.docx" 
                                     onChange={(e) => setRubricFile(e.target.files[0])} 
                                 />
                         </label>
@@ -122,13 +122,13 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Student Doc Upload */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Documento a Evaluar (.pdf)
+                            Documento a Evaluar (.pdf/.docx)
                         </label>
                         <div className="flex items-center gap-2">
                             <input
                                 type="file"
                                 className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
-                                accept=".pdf"
+                                accept=".pdf,.docx"
                                 onChange={(e) => setDocFile(e.target.files[0])}
                             />
                         </div>

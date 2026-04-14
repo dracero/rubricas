@@ -2,7 +2,9 @@
   "name": "rubricas-app",
   "version": "1.0.0",
   "scripts": {
-    "dev": "bash _start.sh",
+    "dev": "concurrently -k -n back,front -c blue,green \"npm run dev:back\" \"npm run dev:front\"",
+    "dev:back": "uv run python -m app.server",
+    "dev:front": "cd frontend && npm run dev",
     "install:all": "npm install && cd frontend && npm install"
   },
   "devDependencies": {

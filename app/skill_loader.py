@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable
 
 from google.adk.agents import Agent
+from google.adk.models.lite_llm import LiteLlm
 from google.adk.skills import list_skills_in_dir, load_skill_from_dir
 from google.adk.skills.models import Skill
 
@@ -91,7 +92,7 @@ def _get_main_instruction(body: str) -> str:
 def load_skills(
     skills_dir: str,
     available_tools: Dict[str, Callable],
-    default_model: str = "gemini-2.5-flash",
+    default_model: Any = LiteLlm(model="openai/gpt-4o-mini"),
 ) -> List[Agent]:
     """Load all skill directories from a directory and create ADK Agents.
 
@@ -149,6 +150,10 @@ def _create_agent_from_skill(
     extra_tools = fm.metadata.get("tools", getattr(fm, "tools", []))
     extra_sub_agents = fm.metadata.get("sub_agents", getattr(fm, "sub_agents", []))
     model = fm.metadata.get("model", getattr(fm, "model", default_model))
+
+    # If model is a string (from SKILL.md frontmatter), wrap it in LiteLlm
+    if isinstance(model, str):
+        model = LiteLlm(model=model)
 
     name = skill.name.replace("-", "_")
 

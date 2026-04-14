@@ -3,17 +3,17 @@ Unified Qdrant Service + ADK Tool Functions.
 
 Consolidates the QdrantService that was previously duplicated across
 generator, evaluator, and corrector agents into a single module.
-Uses Gemini gemini-embedding-001 for embeddings (3072 dimensions).
+Uses OpenAI text-embedding-3-small for embeddings (1536 dimensions) via LiteLLM.
 """
 
 import os
 import hashlib
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from collections import defaultdict
 
-from google import genai
+import litellm
 
 try:
     from qdrant_client import QdrantClient
@@ -31,10 +31,10 @@ from app.domain import (
 
 logger = logging.getLogger(__name__)
 
-# Gemini embedding config
-EMBEDDING_MODEL = "gemini-embedding-001"
-EMBEDDING_DIMENSION = 3072
-VERSION = "FIX_QDRANT_3072_V1"
+# OpenAI embedding config (via LiteLLM)
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSION = 1536
+VERSION = "OPENAI_EMBED_1536_V1"
 
 # ============================================================================
 # Module-level singleton
@@ -72,9 +72,7 @@ class QdrantService:
             self.client = None
             logger.warning("⚠️ Sin conexión a Qdrant")
 
-        # Gemini embedding client
-        self.genai_client = genai.Client(api_key=config.GOOGLE_API_KEY)
-        logger.info(f"✅ Gemini embedding model: {EMBEDDING_MODEL} ({EMBEDDING_DIMENSION}d) [VERSION: {VERSION}]")
+        logger.info(f"✅ OpenAI embedding model: {EMBEDDING_MODEL} ({EMBEDDING_DIMENSION}d) [VERSION: {VERSION}]")
 
         self._init_collection()
 
@@ -144,12 +142,139 @@ class QdrantService:
             return False
 
     def embed(self, text: str) -> List[float]:
-        """Generate embedding vector for text using Gemini API."""
-        result = self.genai_client.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=text,
-        )
-        return result.embeddings[0].values
+        """Generate embedding vector for text using OpenAI text-embedding-3-small via LiteLLM."""
+        response = litellm.embedding(model=EMBEDDING_MODEL, input=[text])
+        return response.data[0]["embedding"]
+
+    # ------------------------------------------------------------------ #
+    # Generic collection methods (used by RubricRepositoryService, etc.)
+    # ------------------------------------------------------------------ #
+
+    def init_collection(self, collection_name: str) -> None:
+        """Create a collection with 1536d cosine config if it doesn't already exist."""
+        if not self.client:
+            return
+        try:
+            collections = self.client.get_collections()
+            exists = any(c.name == collection_name for c in collections.collections)
+            if not exists:
+                logger.info(f"📦 Creating Qdrant collection: {collection_name} (dim={EMBEDDING_DIMENSION})")
+                self.client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=qmodels.VectorParams(
+                        size=EMBEDDING_DIMENSION,
+                        distance=qmodels.Distance.COSINE,
+                    ),
+                )
+        except Exception as e:
+            logger.error(f"⚠️ Error initializing collection '{collection_name}': {e}")
+
+    def upsert_point(self, collection_name: str, point_id: str, vector: List[float], payload: Dict) -> bool:
+        """Generic upsert of a single point to any collection. Returns True on success."""
+        if not self.client:
+            return False
+        try:
+            self.client.upsert(
+                collection_name=collection_name,
+                points=[
+                    qmodels.PointStruct(id=point_id, vector=vector, payload=payload),
+                ],
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error upserting point to '{collection_name}': {e}")
+            return False
+
+    def search_collection(
+        self,
+        collection_name: str,
+        query_text: str,
+        limit: int = 5,
+        score_threshold: float = 0.5,
+    ) -> List[Dict]:
+        """Embed *query_text*, search *collection_name*, return list of dicts with payload + score."""
+        if not self.client:
+            return []
+        try:
+            vector = self.embed(query_text)
+            result = self.client.query_points(
+                collection_name=collection_name,
+                query=vector,
+                limit=limit,
+                score_threshold=score_threshold,
+            )
+            hits = result.points if hasattr(result, "points") else result
+            results: List[Dict] = []
+            for hit in hits:
+                payload = hit.payload.copy() if hit.payload else {}
+                payload["score"] = hit.score
+                results.append(payload)
+            return results
+        except Exception as e:
+            logger.error(f"⚠️ Error searching collection '{collection_name}': {e}")
+            return []
+
+    def get_point(self, collection_name: str, point_id: str) -> Optional[Dict]:
+        """Retrieve a single point by ID. Returns the payload dict or None if not found."""
+        if not self.client:
+            return None
+        try:
+            points = self.client.retrieve(collection_name=collection_name, ids=[point_id])
+            if not points:
+                return None
+            payload = points[0].payload.copy() if points[0].payload else {}
+            return payload
+        except Exception as e:
+            logger.error(f"⚠️ Error retrieving point '{point_id}' from '{collection_name}': {e}")
+            return None
+
+    def scroll_collection(
+        self,
+        collection_name: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Tuple[List[Dict], int]:
+        """Paginated listing of points in a collection.
+
+        Returns ``(list_of_payload_dicts, total_count)``.
+        Each dict includes a ``_point_id`` key with the point's ID.
+        """
+        if not self.client:
+            return [], 0
+        try:
+            # Total count
+            count_result = self.client.count(collection_name=collection_name)
+            total = count_result.count
+
+            # Scroll enough points to cover offset + limit, then slice
+            points, _ = self.client.scroll(
+                collection_name=collection_name,
+                limit=offset + limit,
+            )
+            sliced = points[offset: offset + limit]
+            results: List[Dict] = []
+            for point in sliced:
+                payload = point.payload.copy() if point.payload else {}
+                payload["_point_id"] = point.id
+                results.append(payload)
+            return results, total
+        except Exception as e:
+            logger.error(f"⚠️ Error scrolling collection '{collection_name}': {e}")
+            return [], 0
+
+    def delete_point(self, collection_name: str, point_id: str) -> bool:
+        """Delete a point by ID. Returns True if deleted, False on error."""
+        if not self.client:
+            return False
+        try:
+            self.client.delete(
+                collection_name=collection_name,
+                points_selector=qmodels.PointIdsList(points=[point_id]),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error deleting point '{point_id}' from '{collection_name}': {e}")
+            return False
 
     @traceable(name="QdrantService.save_ontology", run_type="chain")
     def save_ontology(self, ontologia: Ontologia) -> bool:
@@ -200,6 +325,73 @@ class QdrantService:
                 return True
             except Exception as e:
                 logger.error(f"❌ Error saving to Qdrant: {e}")
+                run_tree = get_current_run_tree()
+                if run_tree:
+                    run_tree.error = str(e)
+                return False
+        return False
+
+    @traceable(name="QdrantService.save_ontology_additive", run_type="chain")
+    def save_ontology_additive(self, ontologia: Ontologia, source_document_id: str, source_filename: str) -> bool:
+        """Save ontology to Qdrant additively (upsert) with source document tracking.
+
+        Does NOT clear the collection — only adds/updates entities.
+        Each entity payload includes source_document_id and source_filename
+        for traceability within a batch.
+        """
+        if not self.client:
+            logger.warning("⚠️ No Qdrant client — skipping additive save")
+            return False
+
+        points = []
+
+        relations_by_entity = defaultdict(list)
+        for rel in ontologia.relaciones:
+            relations_by_entity[rel.origen].append(rel.to_dict())
+
+        for entidad in ontologia.entidades:
+            point_id = hashlib.md5(entidad.nombre.encode()).hexdigest()
+            text_for_embedding = f"{entidad.nombre}: {entidad.contexto}"
+            vector = self.embed(text_for_embedding)
+
+            payload = entidad.to_dict()
+            payload["relaciones_salientes"] = relations_by_entity[entidad.nombre]
+            payload["source_document_id"] = source_document_id
+            payload["source_filename"] = source_filename
+
+            points.append(qmodels.PointStruct(
+                id=point_id,
+                vector=vector,
+                payload=payload
+            ))
+
+        if points:
+            try:
+                run_tree = get_current_run_tree()
+                if run_tree:
+                    run_tree.extra = run_tree.extra or {}
+                    run_tree.extra.update({
+                        "qdrant_operation": "upsert_additive",
+                        "collection_name": self.collection_name,
+                        "source_document_id": source_document_id,
+                        "source_filename": source_filename,
+                        "num_entities": len(ontologia.entidades),
+                        "num_relations": len(ontologia.relaciones),
+                        "num_points": len(points),
+                        "vector_dimension": EMBEDDING_DIMENSION,
+                    })
+
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=points
+                )
+                logger.info(
+                    f"✅ Additive save: {len(points)} entities from "
+                    f"'{source_filename}' (doc_id={source_document_id})"
+                )
+                return True
+            except Exception as e:
+                logger.error(f"❌ Error in additive save to Qdrant: {e}")
                 run_tree = get_current_run_tree()
                 if run_tree:
                     run_tree.error = str(e)
@@ -437,10 +629,89 @@ def leer_documento_subido(document_id: str) -> str:
     return f"❌ Documento no encontrado con ID: {document_id}"
 
 
+def buscar_rubricas_repositorio(consulta: str) -> str:
+    """Busca rúbricas similares en el repositorio por consulta semántica.
+
+    Usa esta herramienta para encontrar rúbricas previamente generadas que sean
+    similares a un tema o consulta. Retorna una lista con scores de similitud,
+    fechas, niveles y resúmenes.
+
+    Args:
+        consulta: Texto de búsqueda describiendo el tema o tipo de rúbrica buscada.
+
+    Returns:
+        Una cadena formateada con las rúbricas encontradas y sus metadatos.
+    """
+    try:
+        from app.rubric_repository import _get_rubric_repository_service
+        results = _get_rubric_repository_service().search_similar(consulta)
+
+        if not results:
+            return "No se encontraron rúbricas similares en el repositorio."
+
+        lines = [f"📚 Rúbricas similares encontradas ({len(results)}):\n"]
+        for item in results:
+            score = item.get("score", 0)
+            rubric_id = item.get("rubric_id", "N/A")
+            level = item.get("level", "N/A")
+            created_at = item.get("created_at", "N/A")
+            summary = item.get("summary", "")[:200]
+            filenames = ", ".join(item.get("source_filenames", []))
+            lines.append(
+                f"- [{score:.0%}] ID: {rubric_id}\n"
+                f"  Nivel: {level} | Fecha: {created_at}\n"
+                f"  Documentos fuente: {filenames}\n"
+                f"  Resumen: {summary}\n"
+            )
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"Error in buscar_rubricas_repositorio: {e}")
+        return f"❌ Error buscando rúbricas: {str(e)}"
+
+
+def obtener_rubrica_completa(rubric_id: str) -> str:
+    """Recupera el texto completo y metadatos de una rúbrica del repositorio.
+
+    Usa esta herramienta cuando necesites ver el contenido completo de una rúbrica
+    específica del repositorio. Requiere el ID de la rúbrica.
+
+    Args:
+        rubric_id: El ID único de la rúbrica a recuperar.
+
+    Returns:
+        El texto completo de la rúbrica con sus metadatos, o un mensaje de error.
+    """
+    try:
+        from app.rubric_repository import _get_rubric_repository_service
+        rubric = _get_rubric_repository_service().get_rubric(rubric_id)
+
+        if not rubric:
+            return f"❌ Rúbrica no encontrada con ID: {rubric_id}"
+
+        level = rubric.get("level", "N/A")
+        created_at = rubric.get("created_at", "N/A")
+        filenames = ", ".join(rubric.get("source_filenames", []))
+        rubric_text = rubric.get("rubric_text", "Sin texto disponible")
+
+        return (
+            f"📄 Rúbrica: {rubric_id}\n"
+            f"Nivel: {level} | Fecha: {created_at}\n"
+            f"Documentos fuente: {filenames}\n\n"
+            f"--- TEXTO COMPLETO ---\n{rubric_text}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in obtener_rubrica_completa: {e}")
+        return f"❌ Error recuperando rúbrica: {str(e)}"
+
+
 # Registry of all available tool functions (for skill_loader)
 TOOL_REGISTRY: Dict[str, Any] = {
     "guardar_ontologia_en_qdrant": guardar_ontologia_en_qdrant,
     "buscar_contexto_qdrant": buscar_contexto_qdrant,
     "leer_rubrica_subida": leer_rubrica_subida,
     "leer_documento_subido": leer_documento_subido,
+    "buscar_rubricas_repositorio": buscar_rubricas_repositorio,
+    "obtener_rubrica_completa": obtener_rubrica_completa,
 }
