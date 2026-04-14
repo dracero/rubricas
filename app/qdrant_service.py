@@ -644,7 +644,7 @@ def buscar_rubricas_repositorio(consulta: str) -> str:
     """
     try:
         from app.rubric_repository import _get_rubric_repository_service
-        results = _get_rubric_repository_service().search_similar(consulta)
+        results = _get_rubric_repository_service().search_similar(consulta, score_threshold=0.6)
 
         if not results:
             return "No se encontraron rúbricas similares en el repositorio."
@@ -657,8 +657,10 @@ def buscar_rubricas_repositorio(consulta: str) -> str:
             created_at = item.get("created_at", "N/A")
             summary = item.get("summary", "")[:200]
             filenames = ", ".join(item.get("source_filenames", []))
+            topics = ", ".join(item.get("topics", []))
             lines.append(
                 f"- [{score:.0%}] ID: {rubric_id}\n"
+                f"  Temas: {topics}\n"
                 f"  Nivel: {level} | Fecha: {created_at}\n"
                 f"  Documentos fuente: {filenames}\n"
                 f"  Resumen: {summary}\n"
@@ -706,6 +708,47 @@ def obtener_rubrica_completa(rubric_id: str) -> str:
         return f"❌ Error recuperando rúbrica: {str(e)}"
 
 
+def listar_rubricas_repositorio() -> str:
+    """Lista todas las rúbricas almacenadas en el repositorio con sus temas.
+
+    Usa esta herramienta cuando el usuario quiera saber qué rúbricas hay disponibles,
+    de qué temas tratan, o cuando pregunte de forma genérica por el repositorio.
+    No requiere parámetros.
+
+    Returns:
+        Una cadena formateada con todas las rúbricas y sus temas.
+    """
+    try:
+        from app.rubric_repository import _get_rubric_repository_service
+        items, total = _get_rubric_repository_service().list_rubrics(limit=50)
+
+        if not items:
+            return "El repositorio de rúbricas está vacío. No hay rúbricas guardadas todavía."
+
+        lines = [f"📚 Repositorio de rúbricas ({total} rúbrica{'s' if total != 1 else ''}):\n"]
+        for item in items:
+            rubric_id = item.get("rubric_id", "N/A")
+            topics = item.get("topics", [])
+            level = item.get("level", "N/A")
+            created_at = item.get("created_at", "N/A")[:10]
+            filenames = ", ".join(item.get("source_filenames", []))
+            summary = item.get("summary", "")[:150]
+
+            topics_str = ", ".join(topics) if topics else "Sin temas clasificados"
+            lines.append(
+                f"- ID: {rubric_id}\n"
+                f"  Temas: {topics_str}\n"
+                f"  Nivel: {level} | Fecha: {created_at}\n"
+                f"  Fuente: {filenames}\n"
+                f"  Resumen: {summary}\n"
+            )
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"Error in listar_rubricas_repositorio: {e}")
+        return f"❌ Error listando rúbricas: {str(e)}"
+
+
 # Registry of all available tool functions (for skill_loader)
 TOOL_REGISTRY: Dict[str, Any] = {
     "guardar_ontologia_en_qdrant": guardar_ontologia_en_qdrant,
@@ -714,4 +757,5 @@ TOOL_REGISTRY: Dict[str, Any] = {
     "leer_documento_subido": leer_documento_subido,
     "buscar_rubricas_repositorio": buscar_rubricas_repositorio,
     "obtener_rubrica_completa": obtener_rubrica_completa,
+    "listar_rubricas_repositorio": listar_rubricas_repositorio,
 }

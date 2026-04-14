@@ -58,13 +58,16 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
         routing_instructions = (
             "AGENTES DISPONIBLES:\n"
             f"{agents_desc}\n\n"
-            "INSTRUCCIONES:\n"
-            "1. Analiza el mensaje del usuario para determinar qué necesita.\n"
-            "2. Transfiere al agente más adecuado según la solicitud del usuario.\n"
-            "3. Si no estás seguro, pregunta al usuario qué necesita.\n\n"
+            "INSTRUCCIONES DE ROUTING:\n"
+            "1. Si el usuario quiere BUSCAR o VER rúbricas existentes, o pregunta si hay una rúbrica sobre un tema → transfiere a `repositorio_de_rubricas`\n"
+            "2. Si el usuario quiere GENERAR una nueva rúbrica a partir de un documento → transfiere a `normativa_a_rubrica`\n"
+            "3. Si el usuario quiere EVALUAR un documento contra una rúbrica → transfiere a `evaluador_de_cumplimiento`\n"
+            "4. Si el usuario quiere ayuda para REDACTAR o mejorar un documento → transfiere a `asistente_de_redaccion`\n"
+            "5. Si no estás seguro, pregunta al usuario qué necesita.\n\n"
             "REGLAS:\n"
             "- Siempre responde en español.\n"
-            "- No intentes hacer las tareas tú mismo, delega siempre al agente apropiado."
+            "- No intentes hacer las tareas tú mismo, delega siempre al agente apropiado.\n"
+            "- Cuando el usuario mencione 'rúbricas guardadas', 'repositorio', 'buscar rúbrica', 'tenés una rúbrica sobre...', SIEMPRE transfiere a `repositorio_de_rubricas`."
         )
     else:
         routing_instructions = (

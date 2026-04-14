@@ -44,14 +44,21 @@ class RubricRepositoryService:
         source_filenames: List[str],
         source_document_ids: List[str],
     ) -> Optional[str]:
-        """Store a rubric in the repository.
+        """Store a rubric in the repository with LLM-generated topic index.
 
         Returns the generated ``rubric_id`` (UUID) on success, or ``None``
         if the upsert fails.
         """
         rubric_id = str(uuid.uuid4())
+
+        # Generate topic index using LLM
+        topics = self._generate_topics(rubric_text)
+        logger.info(f"📋 Generated topics for rubric: {topics}")
+
+        # Use topics + summary for the embedding (better semantic matching)
+        embed_text = f"Temas: {', '.join(topics)}. {rubric_text[:500]}"
         try:
-            vector = self.qdrant.embed(rubric_text)
+            vector = self.qdrant.embed(embed_text)
         except Exception as e:
             logger.error(f"❌ Error generating embedding for rubric: {e}")
             return None
@@ -60,6 +67,7 @@ class RubricRepositoryService:
             "rubric_id": rubric_id,
             "rubric_text": rubric_text,
             "summary": rubric_text[:300],
+            "topics": topics,
             "level": level,
             "source_filenames": source_filenames,
             "source_document_ids": source_document_ids,
@@ -73,11 +81,46 @@ class RubricRepositoryService:
             payload=payload,
         )
         if success:
-            logger.info(f"✅ Rubric stored: {rubric_id}")
+            logger.info(f"✅ Rubric stored: {rubric_id} | Topics: {topics}")
             return rubric_id
 
         logger.error(f"❌ Failed to store rubric {rubric_id}")
         return None
+
+    def _generate_topics(self, rubric_text: str) -> List[str]:
+        """Use LLM to extract a list of topic keywords from the rubric text."""
+        try:
+            import litellm
+            import json
+
+            logger.info("🏷️ Calling LLM to generate topics...")
+            response = litellm.completion(
+                model="openai/gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": (
+                        "Extrae los temas principales de esta rúbrica de cumplimiento normativo. "
+                        "Responde SOLO con un array JSON de strings, máximo 8 temas. "
+                        "Cada tema debe ser una frase corta de 2-4 palabras. "
+                        "Ejemplo: [\"calidad académica\", \"evaluación docente\", \"gestión curricular\"]"
+                    )},
+                    {"role": "user", "content": rubric_text[:3000]},
+                ],
+                temperature=0.1,
+            )
+            raw = response.choices[0].message.content or "[]"
+            logger.info(f"🏷️ LLM topics raw response: {raw[:200]}")
+            # Clean markdown fences if present
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1]
+            if raw.endswith("```"):
+                raw = raw.rsplit("```", 1)[0]
+            topics = json.loads(raw.strip())
+            if isinstance(topics, list):
+                return [str(t) for t in topics[:8]]
+        except Exception as e:
+            logger.warning(f"⚠️ Could not generate topics: {e}")
+        return []
 
     def search_similar(
         self,
@@ -147,6 +190,7 @@ class RubricRepositoryService:
                 items.append({
                     "rubric_id": r.get("rubric_id", ""),
                     "summary": r.get("summary", ""),
+                    "topics": r.get("topics", []),
                     "level": r.get("level", ""),
                     "source_filenames": r.get("source_filenames", []),
                     "created_at": r.get("created_at", ""),
@@ -167,6 +211,7 @@ class RubricRepositoryService:
             rubrics.append({
                 "rubric_id": item.get("rubric_id", item.get("_point_id", "")),
                 "summary": item.get("summary", ""),
+                "topics": item.get("topics", []),
                 "level": item.get("level", ""),
                 "source_filenames": item.get("source_filenames", []),
                 "created_at": item.get("created_at", ""),

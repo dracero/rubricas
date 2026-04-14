@@ -1,33 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Upload, FileSearch, Loader2, CheckCircle, AlertCircle, Download } from 'lucide-react';
 import MarkdownTable from './MarkdownTable';
 
 const RubricEvaluator = ({ onComplete }) => {
-    const [rubricFile, setRubricFile] = useState(null);
+    const [repoRubrics, setRepoRubrics] = useState([]);
+    const [selectedRubric, setSelectedRubric] = useState('');
     const [docFile, setDocFile] = useState(null);
     const [status, setStatus] = useState('idle');
     const [result, setResult] = useState(null);
     const [error, setError] = useState('');
+    const [loadingRubrics, setLoadingRubrics] = useState(true);
+
+    // Load rubrics from repo on mount
+    useEffect(() => {
+        const fetchRubrics = async () => {
+            try {
+                const res = await fetch('/api/rubrics/files');
+                if (res.ok) {
+                    const data = await res.json();
+                    setRepoRubrics(data.files || []);
+                }
+            } catch { /* ignore */ }
+            finally { setLoadingRubrics(false); }
+        };
+        fetchRubrics();
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!rubricFile || !docFile) return;
+        if (!selectedRubric || !docFile) return;
 
         setStatus('processing');
         setError('');
 
         try {
-            // 1. Upload Rubric
-            const formRubric = new FormData();
-            formRubric.append('file', rubricFile);
-            const rubRes = await fetch('/api/evaluate/upload_rubric', {
-                method: 'POST',
-                body: formRubric
-            });
-            if (!rubRes.ok) throw new Error('Error subiendo rúbrica');
-            const rubData = await rubRes.json();
-
-            // 2. Upload Doc
+            // 1. Upload Doc
             const formDoc = new FormData();
             formDoc.append('file', docFile);
             const docRes = await fetch('/api/evaluate/upload_doc', {
@@ -37,12 +44,12 @@ const RubricEvaluator = ({ onComplete }) => {
             if (!docRes.ok) throw new Error('Error subiendo documento');
             const docData = await docRes.json();
 
-            // 3. Evaluate
+            // 2. Evaluate using repo rubric filename
             const evalRes = await fetch('/api/evaluate/run', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    rubric_id: rubData.id,
+                    rubric_filename: selectedRubric,
                     doc_id: docData.id
                 })
             });
@@ -78,79 +85,72 @@ const RubricEvaluator = ({ onComplete }) => {
                         <MarkdownTable content={result?.result || result?.content || 'Sin contenido'} />
                     </div>
                     {result?.download_url && (
-                        <a
-                            href={result.download_url}
-                            download
-                            className="inline-flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition"
-                        >
-                            <Download className="w-4 h-4" />
-                            Descargar Informe
+                        <a href={result.download_url} download
+                            className="inline-flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition">
+                            <Download className="w-4 h-4" /> Descargar Informe
                         </a>
                     )}
                     <button
-                        onClick={() => { setStatus('idle'); setResult(null); setRubricFile(null); setDocFile(null); }}
-                        className="block w-full mt-2 text-sm text-gray-500 hover:text-gray-700"
-                    >
+                        onClick={() => { setStatus('idle'); setResult(null); setDocFile(null); setSelectedRubric(''); }}
+                        className="block w-full mt-2 text-sm text-gray-500 hover:text-gray-700">
                         Evaluar otro
                     </button>
                 </div>
             ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
-
-                    {/* Rubric Upload */}
+                    {/* Rubric dropdown from repo */}
                     <div>
-                            <p className="text-sm font-medium text-gray-700 mb-2">
-                            Rúbrica de Referencia (.txt/.md/.pdf/.docx)
-                            </p>
-                            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
-                                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                    <Upload className="w-8 h-8 mb-3 text-gray-400" />
-                                    <p className="mb-2 text-sm text-gray-500">Click para subir</p>
-                                    <p className="text-xs text-gray-500 overflow-hidden text-ellipsis max-w-full px-4 text-center">
-                                        {rubricFile ? rubricFile.name : "Sin archivo"}
-                                    </p>
-                                </div>
-                                <input 
-                                    type="file" 
-                                    className="hidden" 
-                                    accept=".txt,.md,.pdf,.docx" 
-                                    onChange={(e) => setRubricFile(e.target.files[0])} 
-                                />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Rúbrica de Referencia
                         </label>
+                        {loadingRubrics ? (
+                            <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                                <Loader2 className="w-4 h-4 animate-spin" /> Cargando rúbricas...
+                            </div>
+                        ) : repoRubrics.length === 0 ? (
+                            <p className="text-sm text-gray-500 py-2">No hay rúbricas en el repositorio. Generá una primero.</p>
+                        ) : (
+                            <select
+                                value={selectedRubric}
+                                onChange={(e) => setSelectedRubric(e.target.value)}
+                                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm"
+                            >
+                                <option value="">Seleccionar rúbrica...</option>
+                                {repoRubrics.map((r) => (
+                                    <option key={r.filename} value={r.filename}>
+                                        {r.topics?.length > 0 ? `[${r.topics.slice(0, 3).join(', ')}] ` : ''}{r.filename}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
                     </div>
 
-                    {/* Student Doc Upload */}
+                    {/* Document Upload */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             Documento a Evaluar (.pdf/.docx)
                         </label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="file"
-                                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
-                                accept=".pdf,.docx"
-                                onChange={(e) => setDocFile(e.target.files[0])}
-                            />
-                        </div>
+                        <input
+                            type="file"
+                            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100"
+                            accept=".pdf,.docx"
+                            onChange={(e) => setDocFile(e.target.files[0])}
+                        />
                     </div>
 
                     {error && (
                         <div className="flex items-center gap-2 p-3 text-sm text-red-700 bg-red-50 rounded">
-                            <AlertCircle className="w-4 h-4" />
-                            {error}
+                            <AlertCircle className="w-4 h-4" /> {error}
                         </div>
                     )}
 
                     <button
                         type="submit"
-                        disabled={!rubricFile || !docFile || status === 'processing'}
+                        disabled={!selectedRubric || !docFile || status === 'processing'}
                         className="w-full bg-purple-600 text-white py-2 px-4 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition"
                     >
                         {status === 'processing' ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Analizando...
-                            </>
+                            <><Loader2 className="w-4 h-4 animate-spin" /> Analizando...</>
                         ) : 'Iniciar Evaluación'}
                     </button>
                 </form>

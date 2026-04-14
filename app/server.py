@@ -7,7 +7,9 @@ that uses ADK Runner to process messages through the root agent.
 
 import asyncio
 import json
+import re
 from contextlib import asynccontextmanager
+from datetime import datetime
 import logging
 import os
 import sys
@@ -78,6 +80,10 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Skills directory
 SKILLS_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "skills"
 SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Rubric repository directory (persistent local storage)
+RUBRICS_REPO_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "rubrics_repo"
+RUBRICS_REPO_DIR.mkdir(parents=True, exist_ok=True)
 
 # Mapping of file_id -> original filename for batch uploads
 _file_id_to_filename: Dict[str, str] = {}
@@ -158,7 +164,8 @@ class GenerateRequest(BaseModel):
 
 
 class EvaluateRequest(BaseModel):
-    rubric_id: str
+    rubric_id: str = ""
+    rubric_filename: str = ""
     doc_id: str
 
 
@@ -397,17 +404,27 @@ async def chat(request: ChatRequest):
         metadata["component"] = "RubricEvaluator"
         metadata["routed_to"] = "evaluator"
         response_text = response_text.replace("[UI:RubricEvaluator]", "").strip()
+    elif "[UI:RubricRepository]" in response_text:
+        response_type = "action_request"
+        metadata["component"] = "RubricRepository"
+        metadata["routed_to"] = "repository"
+        response_text = response_text.replace("[UI:RubricRepository]", "").strip()
 
-    # Fallback to heuristic keywords if tag is missing
+    # Use LLM to classify intent if no UI tag was found
     if response_type == "text":
-        if _needs_generator_action(user_message, response_text):
+        intent = _classify_intent(user_message)
+        if intent == "generator":
             response_type = "action_request"
             metadata["component"] = "RubricGenerator"
             metadata["routed_to"] = "generator"
-        elif _needs_evaluator_action(user_message, response_text):
+        elif intent == "evaluator":
             response_type = "action_request"
             metadata["component"] = "RubricEvaluator"
             metadata["routed_to"] = "evaluator"
+        elif intent == "repository":
+            response_type = "action_request"
+            metadata["component"] = "RubricRepository"
+            metadata["routed_to"] = "repository"
 
     return ChatResponse(
         source="orchestrator",
@@ -418,24 +435,32 @@ async def chat(request: ChatRequest):
     )
 
 
-def _needs_generator_action(user_msg: str, response: str) -> bool:
-    """Detect if the chat response should trigger the generator UI."""
-    keywords = ["generar rúbrica", "crear rúbrica", "generar rubrica", "crear rubrica",
-                 "genera una rúbrica", "necesito una rúbrica", "generar una rúbrica",
-                 "generar una rubrica", "quiero generar", "quiero crear una rúbrica",
-                 "generame una rúbrica", "generame una rubrica", "haceme una rúbrica",
-                 "haceme una rubrica", "armar una rúbrica", "armar una rubrica",
-                 "generar rúbricas", "generar rubricas"]
-    msg_lower = user_msg.lower()
-    return any(k in msg_lower for k in keywords) or "ACTION:GENERATOR" in response
-
-
-def _needs_evaluator_action(user_msg: str, response: str) -> bool:
-    """Detect if the chat response should trigger the evaluator UI."""
-    keywords = ["evaluar documento", "evaluar un documento",
-                 "evaluar cumplimiento"]
-    msg_lower = user_msg.lower()
-    return any(k in msg_lower for k in keywords) or "ACTION:EVALUATOR" in response
+def _classify_intent(user_msg: str) -> str:
+    """Use LLM to classify user intent into: generator, evaluator, repository, or chat."""
+    try:
+        import litellm
+        response = litellm.completion(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "Clasifica el intent del usuario en exactamente UNA de estas categorías:\n"
+                    "- generator: quiere CREAR o GENERAR una rúbrica nueva a partir de un documento\n"
+                    "- evaluator: quiere EVALUAR un documento contra una rúbrica existente\n"
+                    "- repository: quiere VER, BUSCAR, LISTAR, MODIFICAR o GESTIONAR rúbricas guardadas en el repositorio\n"
+                    "- chat: conversación general, preguntas, o cualquier otra cosa\n\n"
+                    "Responde SOLO con una palabra: generator, evaluator, repository, o chat"
+                )},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.0,
+            max_tokens=10,
+        )
+        intent = response.choices[0].message.content.strip().lower()
+        if intent in ("generator", "evaluator", "repository"):
+            return intent
+    except Exception as e:
+        logger.warning(f"⚠️ Intent classification failed: {e}")
+    return "chat"
 
 
 # ============================================================================
@@ -729,6 +754,28 @@ async def generate_rubric(request: GenerateRequest):
         try:
             similar = _get_rubric_repository_service().search_similar(document_text[:3000])
             if similar:
+                # Find matching local repo filenames
+                repo_files = {f.stem: f.name for f in RUBRICS_REPO_DIR.glob("*.docx")}
+                similar_names = []
+                for s in similar:
+                    # Try to find the local file by matching source_filenames or rubric_id via .meta
+                    matched_name = None
+                    for meta_file in RUBRICS_REPO_DIR.glob("*.meta"):
+                        try:
+                            meta_id = meta_file.read_text(encoding="utf-8").strip()
+                            if meta_id == s.get("rubric_id", ""):
+                                docx_name = meta_file.stem + ".docx"
+                                if (RUBRICS_REPO_DIR / docx_name).exists():
+                                    matched_name = docx_name
+                                    break
+                        except:
+                            pass
+                    similar_names.append({
+                        "filename": matched_name or "rúbrica sin archivo",
+                        "score": round((s.get("score", 0) * 100)),
+                        "rubric_id": s.get("rubric_id", ""),
+                    })
+
                 similar_rubrics = [
                     RubricSummary(
                         rubric_id=s["rubric_id"],
@@ -744,6 +791,7 @@ async def generate_rubric(request: GenerateRequest):
                     "result": "",
                     "download_url": "",
                     "similar_rubrics": [r.model_dump() for r in similar_rubrics],
+                    "similar_names": similar_names,
                 }
         except Exception as e:
             logger.warning(f"⚠️ Semantic search failed, proceeding with generation: {e}")
@@ -845,13 +893,35 @@ async def generate_rubric(request: GenerateRequest):
 
         logger.info(f"✅ Rubric generated and saved to DOCX: {output_filename_docx}")
 
-        # Store generated rubric in repository (fire-and-forget)
+        # Save rubric to local repository folder with descriptive name
+        repo_filename = None
         try:
             doc_ids = request.document_ids if request.document_ids else [request.document_id]
             source_filenames = [_file_id_to_filename.get(did, f"{did}.pdf") for did in doc_ids]
-            _get_rubric_repository_service().store_rubric(
+
+            # Generate short descriptive name (max 4 words from first source filename)
+            base_name = source_filenames[0] if source_filenames else "rubrica"
+            base_name = Path(base_name).stem  # remove extension
+            words = re.sub(r'[^a-zA-ZáéíóúñÁÉÍÓÚÑ0-9\s]', ' ', base_name).split()
+            short_name = "_".join(words[:4]).lower()
+            if not short_name:
+                short_name = "rubrica"
+
+            # Add timestamp to avoid collisions
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            repo_filename = f"{short_name}_{timestamp}.docx"
+            repo_path = RUBRICS_REPO_DIR / repo_filename
+            md_to_docx(rubric_text, str(repo_path))
+            logger.info(f"📁 Rubric saved to repository: {repo_path}")
+
+            # Also store in Qdrant for semantic search
+            rubric_id = _get_rubric_repository_service().store_rubric(
                 rubric_text, request.level, source_filenames, doc_ids
             )
+            # Save rubric_id mapping for Qdrant cleanup on delete
+            if rubric_id:
+                meta_path = RUBRICS_REPO_DIR / f"{short_name}_{timestamp}.meta"
+                meta_path.write_text(rubric_id, encoding="utf-8")
         except Exception as e:
             logger.error(f"⚠️ Failed to store rubric in repository: {e}")
 
@@ -892,6 +962,117 @@ async def download_file(filename: str):
 # ============================================================================
 # API Endpoints - Rubric Repository
 # ============================================================================
+
+@app.get("/api/rubrics/files")
+async def list_rubric_files():
+    """List all rubric DOCX files saved in the local repository folder, with topics from Qdrant."""
+    files = []
+    repo = _get_rubric_repository_service()
+    for f in sorted(RUBRICS_REPO_DIR.glob("*.docx"), key=lambda p: p.stat().st_mtime, reverse=True):
+        topics = []
+        # Try to get topics from Qdrant via .meta file
+        meta_path = RUBRICS_REPO_DIR / (f.stem + ".meta")
+        if meta_path.exists():
+            try:
+                rubric_id = meta_path.read_text(encoding="utf-8").strip()
+                if rubric_id:
+                    rubric_data = repo.get_rubric(rubric_id)
+                    if rubric_data:
+                        topics = rubric_data.get("topics", [])
+            except Exception:
+                pass
+        files.append({
+            "filename": f.name,
+            "size": f.stat().st_size,
+            "created": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+            "download_url": f"/api/rubrics/files/{f.name}",
+            "topics": topics,
+        })
+    return {"files": files, "total": len(files)}
+
+
+@app.get("/api/rubrics/files/{filename}")
+async def download_rubric_file(filename: str):
+    """Download a rubric file from the local repository."""
+    file_path = RUBRICS_REPO_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@app.delete("/api/rubrics/files/{filename}")
+async def delete_rubric_file(filename: str):
+    """Delete a rubric file from the local repository and Qdrant."""
+    file_path = RUBRICS_REPO_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    file_path.unlink()
+    logger.info(f"🗑️ Rubric file deleted: {filename}")
+
+    # Check for .meta file with Qdrant rubric_id
+    meta_filename = Path(filename).stem + ".meta"
+    meta_path = RUBRICS_REPO_DIR / meta_filename
+    if meta_path.exists():
+        try:
+            rubric_id = meta_path.read_text(encoding="utf-8").strip()
+            if rubric_id:
+                _get_rubric_repository_service().delete_rubric(rubric_id)
+                logger.info(f"🗑️ Also removed from Qdrant: {rubric_id}")
+            meta_path.unlink()
+        except Exception as e:
+            logger.warning(f"⚠️ Could not remove from Qdrant: {e}")
+
+    return {"message": f"Archivo {filename} eliminado"}
+
+
+@app.post("/api/rubrics/files/{filename}/replace")
+async def replace_rubric_file(filename: str, file: UploadFile = File(...)):
+    """Replace a rubric file in the repo with an edited version. Deletes old from Qdrant and stores new."""
+    old_path = RUBRICS_REPO_DIR / filename
+    if not old_path.exists():
+        raise HTTPException(status_code=404, detail="Archivo original no encontrado")
+
+    # Delete old from Qdrant
+    meta_filename = Path(filename).stem + ".meta"
+    meta_path = RUBRICS_REPO_DIR / meta_filename
+    if meta_path.exists():
+        try:
+            old_rubric_id = meta_path.read_text(encoding="utf-8").strip()
+            if old_rubric_id:
+                _get_rubric_repository_service().delete_rubric(old_rubric_id)
+                logger.info(f"🗑️ Old rubric removed from Qdrant: {old_rubric_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not remove old rubric from Qdrant: {e}")
+
+    # Save new file (overwrite)
+    content = await file.read()
+    old_path.write_bytes(content)
+    logger.info(f"📁 Rubric file replaced: {filename}")
+
+    # Extract text from the new DOCX and store in Qdrant
+    try:
+        rubric_text = extract_text_from_docx(str(old_path))
+        if rubric_text.strip():
+            new_rubric_id = _get_rubric_repository_service().store_rubric(
+                rubric_text, "avanzado", [filename], []
+            )
+            if new_rubric_id:
+                meta_path.write_text(new_rubric_id, encoding="utf-8")
+                logger.info(f"✅ New rubric stored in Qdrant: {new_rubric_id}")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to store replaced rubric in Qdrant: {e}")
+
+    return {
+        "message": f"Rúbrica {filename} reemplazada exitosamente",
+        "filename": filename,
+        "download_url": f"/api/rubrics/files/{filename}",
+    }
+
+
 
 @app.get("/api/rubrics")
 async def list_rubrics(limit: int = 20, offset: int = 0, search: Optional[str] = None):
@@ -996,12 +1177,20 @@ async def upload_doc(file: UploadFile = File(...)):
 @app.post("/api/evaluate/run")
 async def run_evaluation(request: EvaluateRequest):
     """Run evaluation: compare a document against a rubric."""
+
+    # Resolve rubric: from repo filename or uploaded file
     rubric_path = None
-    for ext in [".pdf", ".txt", ".md", ".docx"]:
-        candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
-        if candidate.exists():
-            rubric_path = candidate
-            break
+    if request.rubric_filename:
+        # Use rubric from local repository
+        rubric_path = RUBRICS_REPO_DIR / request.rubric_filename
+        if not rubric_path.exists():
+            raise HTTPException(status_code=404, detail="Rúbrica no encontrada en el repositorio")
+    elif request.rubric_id:
+        for ext in [".pdf", ".txt", ".md", ".docx"]:
+            candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
+            if candidate.exists():
+                rubric_path = candidate
+                break
 
     if not rubric_path:
         raise HTTPException(status_code=404, detail="Rúbrica no encontrada")
@@ -1035,6 +1224,72 @@ async def run_evaluation(request: EvaluateRequest):
         raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento PDF")
 
     logger.info(f"📋 Evaluating: rubric={len(rubric_text)} chars, doc={len(document_text)} chars")
+
+    # Semantic compatibility check: ask LLM if the document matches the rubric's domain
+    rubric_topics = []
+    if request.rubric_filename:
+        meta_path = RUBRICS_REPO_DIR / (Path(request.rubric_filename).stem + ".meta")
+        if meta_path.exists():
+            try:
+                rubric_id_qdrant = meta_path.read_text(encoding="utf-8").strip()
+                rubric_data = _get_rubric_repository_service().get_rubric(rubric_id_qdrant)
+                if rubric_data:
+                    rubric_topics = rubric_data.get("topics", [])
+            except Exception:
+                pass
+
+    if rubric_topics:
+        try:
+            import litellm as _litellm
+            import json as _json
+
+            rubric_topics_text = ", ".join(rubric_topics)
+            compatibility_response = _litellm.completion(
+                model="openai/gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": (
+                        "Eres un experto en análisis de documentos normativos. "
+                        "Determina si un documento fue creado para cumplir con los requisitos de una rúbrica específica.\n\n"
+                        "Responde SOLO con un JSON: {\"compatible\": true/false, \"score\": 0-100, \"reason\": \"explicación breve\"}\n\n"
+                        "Un documento es compatible SOLO si fue creado específicamente para cumplir "
+                        "con la normativa que la rúbrica evalúa. Por ejemplo:\n"
+                        "- Una rúbrica sobre 'cursos de formación general' es compatible con un programa de curso CFG, pero NO con un documento sobre microcredenciales.\n"
+                        "- Una rúbrica sobre 'calidad de trabajos académicos' es compatible con una tesis, pero NO con un reglamento administrativo.\n\n"
+                        "Sé estricto: el documento debe pertenecer al mismo tipo de entregable que la rúbrica evalúa."
+                    )},
+                    {"role": "user", "content": (
+                        f"Temas de la rúbrica: {rubric_topics_text}\n\n"
+                        f"Primeros 2000 caracteres del documento:\n{document_text[:2000]}"
+                    )},
+                ],
+                temperature=0.1,
+            )
+            raw_compat = compatibility_response.choices[0].message.content or "{}"
+            raw_compat = raw_compat.strip()
+            if raw_compat.startswith("```"): raw_compat = raw_compat.split("\n", 1)[-1]
+            if raw_compat.endswith("```"): raw_compat = raw_compat.rsplit("```", 1)[0]
+            compat = _json.loads(raw_compat.strip())
+
+            is_compatible = compat.get("compatible", True)
+            score = compat.get("score", 100)
+            reason = compat.get("reason", "")
+
+            logger.info(f"📊 Compatibility: {score}% | Compatible: {is_compatible} | {reason}")
+
+            if not is_compatible and score < 50:
+                return {
+                    "result": (
+                        f"⚠️ El documento no parece ser compatible con esta rúbrica.\n\n"
+                        f"**Temas de la rúbrica:** {rubric_topics_text}\n\n"
+                        f"**Análisis:** {reason}\n\n"
+                        f"**Compatibilidad:** {score}%\n\n"
+                        f"Por favor, seleccioná una rúbrica que corresponda al tema del documento."
+                    ),
+                    "download_url": "",
+                    "topic_mismatch": True,
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ Compatibility check failed, proceeding with evaluation: {e}")
 
     # Build the evaluation message with inline text
     agent_message = (

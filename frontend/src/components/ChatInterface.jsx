@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, User, Bot, Sparkles, Download } from 'lucide-react';
 import RubricGenerator from './RubricGenerator';
 import RubricEvaluator from './RubricEvaluator';
+import RubricRepository from './RubricRepository';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import MarkdownTable from './MarkdownTable';
@@ -10,8 +11,8 @@ const ChatInterface = () => {
     const [messages, setMessages] = useState([
         {
             source: 'orchestrator',
-            type: 'text',
-            content: 'Hola, soy RubricAI. ¿En qué puedo ayudarte hoy?',
+            type: 'welcome',
+            content: '¡Hola! Soy RubricAI, tu asistente de cumplimiento normativo. Puedo ayudarte a generar rúbricas a partir de documentos normativos o buscar rúbricas existentes en el repositorio. ¿Qué necesitás?',
             timestamp: new Date()
         }
     ]);
@@ -25,7 +26,38 @@ const ChatInterface = () => {
 
     useEffect(() => {
         scrollToBottom();
+    }, []);
+
+    useEffect(() => {
+        scrollToBottom();
     }, [messages]);
+
+    const handleQuickAction = (action) => {
+        // Simulate sending a message that triggers the component
+        const userMsg = {
+            source: 'user',
+            type: 'text',
+            content: action,
+            timestamp: new Date()
+        };
+        setMessages(prev => [...prev, userMsg]);
+
+        // Directly show the component
+        let component = null;
+        if (action.includes('Generar')) component = 'RubricGenerator';
+        else if (action.includes('Repositorio')) component = 'RubricRepository';
+        else if (action.includes('Evaluar')) component = 'RubricEvaluator';
+
+        if (component) {
+            setMessages(prev => [...prev, {
+                source: 'orchestrator',
+                type: 'action_request',
+                content: '',
+                metadata: { component, architecture: 'skills' },
+                timestamp: new Date()
+            }]);
+        }
+    };
 
     const handleSend = async (e) => {
         e.preventDefault();
@@ -72,6 +104,27 @@ const ChatInterface = () => {
     };
 
     const renderMessageContent = (msg) => {
+        if (msg.type === 'welcome') {
+            return (
+                <div className="space-y-3">
+                    <p>{msg.content}</p>
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            onClick={() => handleQuickAction('Generar nueva rúbrica')}
+                            className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-full hover:bg-blue-700 transition"
+                        >
+                            📝 Generar rúbrica
+                        </button>
+                        <button
+                            onClick={() => handleQuickAction('Ver Repositorio de rúbricas')}
+                            className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-full hover:bg-amber-600 transition"
+                        >
+                            📁 Repositorio
+                        </button>
+                    </div>
+                </div>
+            );
+        }
         if (msg.type === 'action_request') {
             const componentType = msg.metadata?.component;
             return (
@@ -83,6 +136,9 @@ const ChatInterface = () => {
                         )}
                         {componentType === 'RubricEvaluator' && (
                             <RubricEvaluator />
+                        )}
+                        {componentType === 'RubricRepository' && (
+                            <RubricRepository />
                         )}
                     </div>
                 </div>

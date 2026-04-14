@@ -8,6 +8,7 @@ model: openai/gpt-4o-mini
 tools:
   - buscar_rubricas_repositorio
   - obtener_rubrica_completa
+  - listar_rubricas_repositorio
 ---
 
 # Repositorio de Rúbricas
@@ -27,6 +28,12 @@ CUANDO el usuario pregunte por rúbricas sobre un tema o quiera buscar en el rep
 1. Usa la herramienta `buscar_rubricas_repositorio` con la consulta del usuario
 2. Presenta los resultados de forma clara: score de similitud, nivel, fecha, documentos fuente y resumen
 3. Si hay resultados relevantes, sugiere al usuario que puede usar alguna como base para generar una nueva rúbrica adaptada
+
+### Listado general de rúbricas
+CUANDO el usuario pregunte de forma genérica qué rúbricas hay, de qué temas tratan, o quiera ver el repositorio completo:
+1. Usa la herramienta `listar_rubricas_repositorio` (sin parámetros)
+2. Presenta los temas de cada rúbrica de forma clara y conversacional
+3. Ofrece buscar más detalle sobre alguna rúbrica específica
 
 ### Consulta de rúbrica completa
 CUANDO el usuario quiera ver el contenido completo de una rúbrica:
