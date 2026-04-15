@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Loader2, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const statusIcon = (status) => {
     switch (status) {
@@ -14,28 +15,31 @@ const statusIcon = (status) => {
     }
 };
 
-const statusLabel = (status) => {
-    switch (status) {
-        case 'en_proceso': return 'En proceso';
-        case 'completado': return 'Completado';
-        case 'error': return 'Error';
-        default: return 'Pendiente';
-    }
-};
-
 const ExtractionProgress = ({ batchId, onComplete }) => {
+    const { lang, t } = useLanguage();
     const [statusData, setStatusData] = useState(null);
     const [pollError, setPollError] = useState('');
     const intervalRef = useRef(null);
     const completedRef = useRef(false);
+
+    const statusLabel = (status) => {
+        switch (status) {
+            case 'en_proceso': return t('extraction.status.processing');
+            case 'completado': return t('extraction.status.completed');
+            case 'error': return t('extraction.status.error');
+            default: return t('extraction.status.pending');
+        }
+    };
 
     useEffect(() => {
         if (!batchId) return;
 
         const poll = async () => {
             try {
-                const res = await fetch(`/api/upload/status/${batchId}`);
-                if (!res.ok) throw new Error('Error consultando estado');
+                const res = await fetch(`/api/upload/status/${batchId}`, {
+                    headers: { 'Accept-Language': lang },
+                });
+                if (!res.ok) throw new Error(t('extraction.poll.error'));
                 const data = await res.json();
                 setStatusData(data);
                 setPollError('');
@@ -49,7 +53,7 @@ const ExtractionProgress = ({ batchId, onComplete }) => {
                     if (onComplete) onComplete(data);
                 }
             } catch {
-                setPollError('Error de conexión al consultar estado');
+                setPollError(t('extraction.poll.error'));
             }
         };
 
@@ -63,7 +67,7 @@ const ExtractionProgress = ({ batchId, onComplete }) => {
         return (
             <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Consultando estado de extracción...
+                {t('extraction.loading')}
             </div>
         );
     }
@@ -74,7 +78,7 @@ const ExtractionProgress = ({ batchId, onComplete }) => {
     return (
         <div className="space-y-3">
             <p className="text-sm font-medium text-gray-700">
-                Extracción de ontología
+                {t('extraction.title')}
             </p>
 
             <ul className="space-y-2">
@@ -88,7 +92,7 @@ const ExtractionProgress = ({ batchId, onComplete }) => {
                             </div>
                             {doc.status === 'completado' && (
                                 <p className="text-xs text-gray-500 mt-0.5">
-                                    {doc.entities_count} entidades · {doc.relations_count} relaciones
+                                    {doc.entities_count} {t('extraction.entities')} · {doc.relations_count} {t('extraction.relations')}
                                 </p>
                             )}
                             {doc.status === 'error' && doc.error_message && (
@@ -105,7 +109,7 @@ const ExtractionProgress = ({ batchId, onComplete }) => {
 
             {allDone && summary && (
                 <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm">
-                    <p className="font-medium text-blue-800">Resumen del lote</p>
+                    <p className="font-medium text-blue-800">{t('extraction.summary.title')}</p>
                     <p className="text-blue-700 text-xs mt-1">
                         {summary.total} documento{summary.total > 1 ? 's' : ''} procesado{summary.total > 1 ? 's' : ''} —{' '}
                         {summary.completado} exitoso{summary.completado > 1 ? 's' : ''}{summary.error > 0 ? `, ${summary.error} con error` : ''}

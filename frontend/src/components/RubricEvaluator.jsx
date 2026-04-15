@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Upload, FileSearch, Loader2, CheckCircle, AlertCircle, Download } from 'lucide-react';
 import MarkdownTable from './MarkdownTable';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const RubricEvaluator = ({ onComplete }) => {
+    const { lang, t } = useLanguage();
     const [repoRubrics, setRepoRubrics] = useState([]);
     const [selectedRubric, setSelectedRubric] = useState('');
     const [docFile, setDocFile] = useState(null);
@@ -15,7 +17,9 @@ const RubricEvaluator = ({ onComplete }) => {
     useEffect(() => {
         const fetchRubrics = async () => {
             try {
-                const res = await fetch('/api/rubrics/files');
+                const res = await fetch('/api/rubrics/files', {
+                    headers: { 'Accept-Language': lang },
+                });
                 if (res.ok) {
                     const data = await res.json();
                     setRepoRubrics(data.files || []);
@@ -39,22 +43,26 @@ const RubricEvaluator = ({ onComplete }) => {
             formDoc.append('file', docFile);
             const docRes = await fetch('/api/evaluate/upload_doc', {
                 method: 'POST',
+                headers: { 'Accept-Language': lang },
                 body: formDoc
             });
-            if (!docRes.ok) throw new Error('Error subiendo documento');
+            if (!docRes.ok) throw new Error(t('evaluator.error.upload'));
             const docData = await docRes.json();
 
             // 2. Evaluate using repo rubric filename
             const evalRes = await fetch('/api/evaluate/run', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept-Language': lang,
+                },
                 body: JSON.stringify({
                     rubric_filename: selectedRubric,
                     doc_id: docData.id
                 })
             });
 
-            if (!evalRes.ok) throw new Error('Error en evaluación');
+            if (!evalRes.ok) throw new Error(t('evaluator.error.evaluate'));
             const evalData = await evalRes.json();
 
             setResult(evalData);
@@ -72,28 +80,28 @@ const RubricEvaluator = ({ onComplete }) => {
         <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200 mt-4 max-w-2xl">
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <FileSearch className="w-5 h-5 text-purple-600" />
-                Evaluador de Documentos
+                {t('evaluator.title')}
             </h3>
 
             {status === 'success' ? (
                 <div className="space-y-4">
                     <div className="flex items-center gap-2 text-green-700">
                         <CheckCircle className="w-5 h-5" />
-                        <span className="font-medium">¡Evaluación Completada!</span>
+                        <span className="font-medium">{t('evaluator.success')}</span>
                     </div>
                     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
-                        <MarkdownTable content={result?.result || result?.content || 'Sin contenido'} />
+                        <MarkdownTable content={result?.result || result?.content || t('evaluator.no.content')} />
                     </div>
                     {result?.download_url && (
                         <a href={result.download_url} download
                             className="inline-flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition">
-                            <Download className="w-4 h-4" /> Descargar Informe
+                            <Download className="w-4 h-4" /> {t('evaluator.download.report')}
                         </a>
                     )}
                     <button
                         onClick={() => { setStatus('idle'); setResult(null); setDocFile(null); setSelectedRubric(''); }}
                         className="block w-full mt-2 text-sm text-gray-500 hover:text-gray-700">
-                        Evaluar otro
+                        {t('evaluator.reset')}
                     </button>
                 </div>
             ) : (
@@ -101,21 +109,21 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Rubric dropdown from repo */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Rúbrica de Referencia
+                            {t('evaluator.rubric.label')}
                         </label>
                         {loadingRubrics ? (
                             <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                                <Loader2 className="w-4 h-4 animate-spin" /> Cargando rúbricas...
+                                <Loader2 className="w-4 h-4 animate-spin" /> {t('evaluator.loading.rubrics')}
                             </div>
                         ) : repoRubrics.length === 0 ? (
-                            <p className="text-sm text-gray-500 py-2">No hay rúbricas en el repositorio. Generá una primero.</p>
+                            <p className="text-sm text-gray-500 py-2">{t('evaluator.no.rubrics')}</p>
                         ) : (
                             <select
                                 value={selectedRubric}
                                 onChange={(e) => setSelectedRubric(e.target.value)}
                                 className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm"
                             >
-                                <option value="">Seleccionar rúbrica...</option>
+                                <option value="">{t('evaluator.rubric.select')}</option>
                                 {repoRubrics.map((r) => (
                                     <option key={r.filename} value={r.filename}>
                                         {r.topics?.length > 0 ? `[${r.topics.slice(0, 3).join(', ')}] ` : ''}{r.filename}
@@ -128,7 +136,7 @@ const RubricEvaluator = ({ onComplete }) => {
                     {/* Document Upload */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Documento a Evaluar (.pdf/.docx)
+                            {t('evaluator.doc.label')}
                         </label>
                         <input
                             type="file"
@@ -150,8 +158,8 @@ const RubricEvaluator = ({ onComplete }) => {
                         className="w-full bg-purple-600 text-white py-2 px-4 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition"
                     >
                         {status === 'processing' ? (
-                            <><Loader2 className="w-4 h-4 animate-spin" /> Analizando...</>
-                        ) : 'Iniciar Evaluación'}
+                            <><Loader2 className="w-4 h-4 animate-spin" /> {t('evaluator.button.evaluating')}</>
+                        ) : t('evaluator.button.evaluate')}
                     </button>
                 </form>
             )}

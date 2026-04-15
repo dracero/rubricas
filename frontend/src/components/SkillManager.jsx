@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Trash2, Download, FileText, X, ChevronDown, ChevronUp, Plus, Puzzle, Wrench, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const SkillManager = () => {
+    const { lang, t } = useLanguage();
     const [skills, setSkills] = useState([]);
     const [availableTools, setAvailableTools] = useState([]);
     const [isOpen, setIsOpen] = useState(false);
@@ -13,7 +15,9 @@ const SkillManager = () => {
 
     const fetchSkills = async () => {
         try {
-            const res = await fetch('/api/skills');
+            const res = await fetch('/api/skills', {
+                headers: { 'Accept-Language': lang },
+            });
             if (res.ok) {
                 const data = await res.json();
                 setSkills(data.skills || []);
@@ -25,7 +29,9 @@ const SkillManager = () => {
 
     const fetchTools = async () => {
         try {
-            const res = await fetch('/api/skills/tools');
+            const res = await fetch('/api/skills/tools', {
+                headers: { 'Accept-Language': lang },
+            });
             if (res.ok) {
                 const data = await res.json();
                 setAvailableTools(data.tools || []);
@@ -45,7 +51,7 @@ const SkillManager = () => {
         if (!file) return;
 
         if (!file.name.endsWith('.md')) {
-            setMessage({ type: 'error', text: 'Solo se aceptan archivos .md' });
+            setMessage({ type: 'error', text: t('skills.error.md.only') });
             return;
         }
 
@@ -58,6 +64,7 @@ const SkillManager = () => {
         try {
             const res = await fetch('/api/skills/upload', {
                 method: 'POST',
+                headers: { 'Accept-Language': lang },
                 body: formData,
             });
 
@@ -67,10 +74,10 @@ const SkillManager = () => {
                 await fetchSkills();
             } else {
                 const err = await res.json();
-                setMessage({ type: 'error', text: err.detail || 'Error subiendo skill' });
+                setMessage({ type: 'error', text: err.detail || t('skills.error.upload') });
             }
         } catch (error) {
-            setMessage({ type: 'error', text: 'Error de conexión' });
+            setMessage({ type: 'error', text: t('skills.error.connection') });
         } finally {
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
@@ -78,18 +85,21 @@ const SkillManager = () => {
     };
 
     const handleDelete = async (filename) => {
-        if (!confirm(`¿Eliminar el skill "${filename}"?`)) return;
+        if (!confirm(t('skills.confirm.delete').replace('{filename}', filename))) return;
 
         try {
-            const res = await fetch(`/api/skills/${filename}`, { method: 'DELETE' });
+            const res = await fetch(`/api/skills/${filename}`, {
+                method: 'DELETE',
+                headers: { 'Accept-Language': lang },
+            });
             if (res.ok) {
-                setMessage({ type: 'success', text: `Skill "${filename}" eliminado` });
+                setMessage({ type: 'success', text: t('skills.deleted').replace('{filename}', filename) });
                 await fetchSkills();
             } else {
-                setMessage({ type: 'error', text: 'Error eliminando skill' });
+                setMessage({ type: 'error', text: t('skills.error.delete') });
             }
         } catch (error) {
-            setMessage({ type: 'error', text: 'Error de conexión' });
+            setMessage({ type: 'error', text: t('skills.error.connection') });
         }
     };
 
@@ -105,7 +115,7 @@ const SkillManager = () => {
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all duration-200 border border-indigo-200"
             >
                 <Puzzle className="w-4 h-4" />
-                <span className="text-sm font-medium">Skills</span>
+                <span className="text-sm font-medium">{t('skills.button')}</span>
                 <span className="bg-indigo-200 text-indigo-800 text-xs font-bold px-1.5 py-0.5 rounded-full">
                     {skills.length}
                 </span>
@@ -126,7 +136,7 @@ const SkillManager = () => {
                         <div className="px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <Puzzle className="w-5 h-5" />
-                                <h3 className="font-semibold text-sm">Gestión de Skills</h3>
+                                <h3 className="font-semibold text-sm">{t('skills.panel.title')}</h3>
                             </div>
                             <button onClick={() => setIsOpen(false)} className="hover:bg-white/20 rounded-lg p-1 transition">
                                 <X className="w-4 h-4" />
@@ -151,7 +161,7 @@ const SkillManager = () => {
                         <div className="max-h-64 overflow-y-auto divide-y divide-gray-100">
                             {skills.length === 0 ? (
                                 <div className="px-4 py-8 text-center text-gray-400 text-sm">
-                                    No hay skills cargados
+                                    {t('skills.empty')}
                                 </div>
                             ) : (
                                 skills.map((skill) => (
@@ -166,9 +176,9 @@ const SkillManager = () => {
                                                     <p className="text-xs text-gray-500 truncate">{skill.filename}</p>
                                                     {skill.tools && skill.tools.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 mt-1">
-                                                            {skill.tools.map(t => (
-                                                                <span key={t} className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
-                                                                    {t}
+                                                            {skill.tools.map(tl => (
+                                                                <span key={tl} className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                                                                    {tl}
                                                                 </span>
                                                             ))}
                                                         </div>
@@ -188,14 +198,14 @@ const SkillManager = () => {
                                                 <button
                                                     onClick={() => handleDownload(skill.filename)}
                                                     className="p-1.5 rounded-lg hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition"
-                                                    title="Descargar"
+                                                    title={t('skills.action.download')}
                                                 >
                                                     <Download className="w-3.5 h-3.5" />
                                                 </button>
                                                 <button
                                                     onClick={() => handleDelete(skill.filename)}
                                                     className="p-1.5 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-600 transition"
-                                                    title="Eliminar"
+                                                    title={t('skills.action.delete')}
                                                 >
                                                     <Trash2 className="w-3.5 h-3.5" />
                                                 </button>
@@ -214,7 +224,7 @@ const SkillManager = () => {
                             >
                                 <div className="flex items-center gap-2">
                                     <Wrench className="w-4 h-4" />
-                                    <span>Herramientas Disponibles</span>
+                                    <span>{t('skills.tools.title')}</span>
                                     <span className="bg-amber-200 text-amber-800 text-xs font-bold px-1.5 py-0.5 rounded-full">
                                         {availableTools.length}
                                     </span>
@@ -235,8 +245,7 @@ const SkillManager = () => {
                                             <div className="flex items-start gap-2">
                                                 <Info className="w-3.5 h-3.5 text-blue-500 mt-0.5 shrink-0" />
                                                 <p className="text-[11px] text-blue-600 leading-relaxed">
-                                                    Usá estos nombres en el campo <code className="bg-blue-100 px-1 rounded text-[10px]">tools</code> del
-                                                    frontmatter YAML de tu skill. Ejemplo:
+                                                    {t('skills.tools.instructions')} {t('skills.tools.example')}
                                                     <code className="block bg-blue-100 px-2 py-1 rounded mt-1 text-[10px] font-mono">
                                                         tools:<br/>
                                                         &nbsp;&nbsp;- buscar_contexto_qdrant
@@ -260,7 +269,7 @@ const SkillManager = () => {
                                                     </p>
                                                     {tool.parameters && tool.parameters.length > 0 && (
                                                         <div className="ml-5.5">
-                                                            <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide mb-0.5">Parámetros:</p>
+                                                            <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide mb-0.5">{t('skills.tools.params')}</p>
                                                             {tool.parameters.map((param) => (
                                                                 <div key={param.name} className="flex items-center gap-1.5 text-[11px]">
                                                                     <code className="text-amber-700 font-mono bg-amber-50 px-1 rounded">{param.name}</code>
@@ -303,12 +312,12 @@ const SkillManager = () => {
                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                                         </svg>
-                                        Subiendo...
+                                        {t('skills.upload.uploading')}
                                     </>
                                 ) : (
                                     <>
                                         <Plus className="w-4 h-4" />
-                                        Subir Skill (.md)
+                                        {t('skills.upload.button')}
                                     </>
                                 )}
                             </label>
@@ -321,4 +330,3 @@ const SkillManager = () => {
 };
 
 export default SkillManager;
-

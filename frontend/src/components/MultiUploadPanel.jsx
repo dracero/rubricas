@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, X, FileText, AlertCircle, Loader2 } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const formatSize = (bytes) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -8,6 +9,7 @@ const formatSize = (bytes) => {
 };
 
 const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
+    const { lang, t } = useLanguage();
     const [files, setFiles] = useState([]);
     const [uploading, setUploading] = useState(false);
     const [rejected, setRejected] = useState([]);
@@ -59,8 +61,12 @@ const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
                 ? `/api/upload/batch?batch_id=${batchId}`
                 : `/api/upload/batch?clear=${clearKnowledge}`;
 
-            const res = await fetch(url, { method: 'POST', body: formData });
-            if (!res.ok) throw new Error('Error subiendo archivos');
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Accept-Language': lang },
+                body: formData,
+            });
+            if (!res.ok) throw new Error(t('upload.error.upload'));
 
             const data = await res.json();
             if (data.rejected?.length) setRejected(data.rejected);
@@ -88,7 +94,7 @@ const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
             >
                 <Upload className="w-8 h-8 text-gray-400 mb-2" />
                 <p className="text-sm text-gray-500">
-                    Arrastra o selecciona uno o más PDFs
+                    {t('upload.drag')}
                 </p>
                 <input
                     ref={inputRef}
@@ -103,7 +109,7 @@ const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
             {files.length > 0 && (
                 <div className="space-y-2">
                     <p className="text-sm font-medium text-gray-700">
-                        {files.length} archivo{files.length > 1 ? 's' : ''} seleccionado{files.length > 1 ? 's' : ''}
+                        {files.length} {files.length > 1 ? t('upload.files.selected.plural') : t('upload.files.selected.singular')}
                     </p>
                     <ul className="space-y-1">
                         {files.map((f, i) => (
@@ -132,7 +138,7 @@ const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
             {rejected.length > 0 && (
                 <div className="p-3 bg-yellow-50 rounded border border-yellow-200 text-sm space-y-1">
                     <p className="font-medium text-yellow-800 flex items-center gap-1">
-                        <AlertCircle className="w-4 h-4" /> Archivos rechazados:
+                        <AlertCircle className="w-4 h-4" /> {t('upload.rejected.title')}
                     </p>
                     {rejected.map((r, i) => (
                         <p key={i} className="text-yellow-700 ml-5">
@@ -150,7 +156,7 @@ const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
                         onChange={(e) => setClearKnowledge(e.target.checked)}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    Limpiar base de conocimiento (recomendado para nueva normativa)
+                    {t('upload.clear.knowledge')}
                 </label>
             )}
 
@@ -162,12 +168,12 @@ const MultiUploadPanel = ({ batchId, onUploadComplete }) => {
                 {uploading ? (
                     <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        Subiendo documentos...
+                        {t('upload.button.uploading')}
                     </>
                 ) : (
                     <>
                         <Upload className="w-4 h-4" />
-                        Subir documentos
+                        {t('upload.button.upload')}
                     </>
                 )}
             </button>

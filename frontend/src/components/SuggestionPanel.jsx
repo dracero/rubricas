@@ -1,15 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, Eye, FileText, Calendar, BarChart3, Loader2, X, Download } from 'lucide-react';
 import MarkdownTable from './MarkdownTable';
-
-const levelLabel = (level) => {
-    switch (level) {
-        case 'inicial': return 'Operacional';
-        case 'avanzado': return 'Técnico';
-        case 'critico': return 'Alta Criticidad';
-        default: return level;
-    }
-};
+import { useLanguage } from '../contexts/LanguageContext';
 
 const levelColor = (level) => {
     switch (level) {
@@ -37,9 +29,19 @@ const formatScore = (score) => {
 };
 
 const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull }) => {
+    const { lang, t } = useLanguage();
     const [expandedId, setExpandedId] = useState(null);
     const [fullRubric, setFullRubric] = useState(null);
     const [loadingFull, setLoadingFull] = useState(null);
+
+    const levelLabel = (level) => {
+        switch (level) {
+            case 'inicial': return t('suggestions.level.inicial');
+            case 'avanzado': return t('suggestions.level.avanzado');
+            case 'critico': return t('suggestions.level.critico');
+            default: return level;
+        }
+    };
 
     const handleViewFull = async (rubricId) => {
         if (expandedId === rubricId) {
@@ -50,8 +52,10 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
 
         setLoadingFull(rubricId);
         try {
-            const res = await fetch(`/api/rubrics/${rubricId}`);
-            if (!res.ok) throw new Error('Error al obtener rúbrica');
+            const res = await fetch(`/api/rubrics/${rubricId}`, {
+                headers: { 'Accept-Language': lang },
+            });
+            if (!res.ok) throw new Error(t('suggestions.error.fetch'));
             const data = await res.json();
             setFullRubric(data);
             setExpandedId(rubricId);
@@ -68,7 +72,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
         <div className="space-y-4">
             <div className="bg-blue-50 border border-blue-200 rounded p-3 text-sm text-blue-700 flex items-center gap-2">
                 <Sparkles className="w-4 h-4 shrink-0" />
-                Se encontraron <strong>{suggestions.length}</strong> rúbrica{suggestions.length > 1 ? 's' : ''} similar{suggestions.length > 1 ? 'es' : ''} en el repositorio
+                Se encontraron <strong>{suggestions.length}</strong> {suggestions.length > 1 ? t('suggestions.found.plural') : t('suggestions.found.singular')}
             </div>
 
             <div className="space-y-3">
@@ -99,7 +103,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
 
                         {/* Text preview */}
                         <p className="text-sm text-gray-600 leading-relaxed line-clamp-3">
-                            {s.summary || '(Sin resumen)'}
+                            {s.summary || t('suggestions.no.summary')}
                         </p>
 
                         {/* Expanded full rubric */}
@@ -111,7 +115,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
                                 >
                                     <X className="w-4 h-4" />
                                 </button>
-                                <MarkdownTable content={fullRubric.rubric_text || 'Sin contenido'} />
+                                <MarkdownTable content={fullRubric.rubric_text || t('suggestions.no.content')} />
                                 {fullRubric.download_url && (
                                     <a
                                         href={fullRubric.download_url}
@@ -119,7 +123,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
                                         className="inline-flex items-center gap-1 mt-2 text-xs text-blue-600 hover:text-blue-800"
                                     >
                                         <Download className="w-3 h-3" />
-                                        Descargar DOCX
+                                        {t('chat.download.docx')}
                                     </a>
                                 )}
                             </div>
@@ -131,7 +135,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
                                 onClick={() => onSelectBase(s.rubric_id)}
                                 className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition"
                             >
-                                Usar como base
+                                {t('suggestions.use.base')}
                             </button>
                             <button
                                 onClick={() => handleViewFull(s.rubric_id)}
@@ -143,7 +147,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
                                 ) : (
                                     <Eye className="w-3 h-3" />
                                 )}
-                                {expandedId === s.rubric_id ? 'Ocultar' : 'Ver completa'}
+                                {expandedId === s.rubric_id ? t('suggestions.hide') : t('suggestions.view.full')}
                             </button>
                         </div>
                     </div>
@@ -156,7 +160,7 @@ const SuggestionPanel = ({ suggestions, onSelectBase, onGenerateNew, onViewFull 
                 className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded hover:bg-gray-200 transition text-sm flex items-center justify-center gap-2"
             >
                 <Sparkles className="w-4 h-4" />
-                Generar nueva (ignorar sugerencias)
+                {t('suggestions.generate.new')}
             </button>
         </div>
     );

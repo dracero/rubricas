@@ -34,7 +34,7 @@ load_dotenv()
 
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -61,6 +61,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.docx_converter import md_to_docx, extract_text_from_docx, detect_rubric_in_response
+from app.i18n import get_request_language, get_message, LANGUAGE_NAMES
 
 
 logging.basicConfig(level=logging.INFO)
@@ -198,12 +199,13 @@ def extract_text_from_pdf(pdf_path: str) -> str:
 # ADK Runner Helper
 # ============================================================================
 
-async def run_agent(message: str, session_id: str = None) -> str:
+async def run_agent(message: str, session_id: str = None, lang: str = 'es') -> str:
     """Send a message to the root agent via ADK Runner and return the response.
 
     Args:
         message: The user message to process.
         session_id: Optional session ID for conversation continuity.
+        lang: Language code for the response (default 'es').
 
     Returns:
         The agent's response text.
@@ -211,6 +213,10 @@ async def run_agent(message: str, session_id: str = None) -> str:
     global runner, session_service
 
     sid = session_id or str(uuid.uuid4())
+
+    # Prepend language directive so the agent responds in the requested language
+    language_name = LANGUAGE_NAMES.get(lang, 'español')
+    prefixed_message = f"[SYSTEM: Respond in {language_name}. All your output must be in {language_name}.]\n\n{message}"
 
     # Ensure session exists
     session = await session_service.get_session(
@@ -228,7 +234,7 @@ async def run_agent(message: str, session_id: str = None) -> str:
     # Build the user message
     user_content = types.Content(
         role="user",
-        parts=[types.Part.from_text(text=message)]
+        parts=[types.Part.from_text(text=prefixed_message)]
     )
 
     # Retry configuration for transient errors (503, 429)
@@ -347,6 +353,15 @@ async def root():
     }
 
 
+@app.get("/api/config")
+async def get_config():
+    """Return system configuration for the frontend."""
+    return {
+        "language": os.getenv("SYSTEM_LANGUAGE", "es"),
+        "institution": os.getenv("INSTITUTION_NAME", ""),
+    }
+
+
 # ============================================================================
 # API Endpoints - Chat
 # ============================================================================
@@ -356,13 +371,14 @@ _current_chat_session_id: Optional[str] = None
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(chat_request: ChatRequest, request: Request):
     """Main chat endpoint — routes through the root agent."""
     global _current_chat_session_id
 
-    user_message = request.message.strip()
+    lang = get_request_language(request)
+    user_message = chat_request.message.strip()
     if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+        raise HTTPException(status_code=400, detail=get_message('empty_message', lang))
 
     logger.info(f"📩 Chat received: {user_message[:80]}...")
 
@@ -371,7 +387,7 @@ async def chat(request: ChatRequest):
         _current_chat_session_id = str(uuid.uuid4())
 
     try:
-        response_text = await run_agent(user_message, session_id=_current_chat_session_id)
+        response_text = await run_agent(user_message, session_id=_current_chat_session_id, lang=lang)
     except Exception as e:
         logger.error(f"❌ Agent error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -468,10 +484,11 @@ def _classify_intent(user_msg: str) -> str:
 # ============================================================================
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(request: Request, file: UploadFile = File(...)):
     """Upload a PDF file for rubric generation."""
+    lang = get_request_language(request)
     if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF")
+        raise HTTPException(status_code=400, detail=get_message('pdf_only', lang))
 
     file_id = str(uuid.uuid4())
     file_path = UPLOAD_DIR / f"{file_id}.pdf"
@@ -489,11 +506,13 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/api/upload/batch", response_model=BatchUploadResponse)
 async def upload_batch(
+    request: Request,
     files: List[UploadFile] = File(...),
     batch_id: Optional[str] = None,
     clear: bool = True,
 ):
     """Accept multiple PDF files, store them, and trigger async ontology extraction."""
+    lang = get_request_language(request)
     accepted: List[FileInfo] = []
     rejected: List[RejectedFile] = []
 
@@ -511,7 +530,7 @@ async def upload_batch(
             rejected.append(
                 RejectedFile(
                     filename=file.filename or "unknown",
-                    reason="Solo se aceptan archivos PDF",
+                    reason=get_message('pdf_only', lang),
                 )
             )
 
@@ -547,12 +566,13 @@ async def upload_batch(
 
 
 @app.get("/api/upload/status/{batch_id}", response_model=BatchStatusResponse)
-async def get_batch_status(batch_id: str):
+async def get_batch_status(batch_id: str, request: Request):
     """Return extraction status for each document in the batch."""
+    lang = get_request_language(request)
     bm = get_batch_manager()
     batch = bm.get_batch_status(batch_id)
     if batch is None:
-        raise HTTPException(status_code=404, detail="Lote no encontrado")
+        raise HTTPException(status_code=404, detail=get_message('batch_not_found', lang))
 
     documents: List[DocumentStatus] = []
     summary_counts: Dict[str, int] = {
@@ -666,7 +686,7 @@ async def _process_document(
 # Multi-document concatenation helper
 # ============================================================================
 
-def _concatenate_documents(doc_ids: List[str], max_chars: int = 30000) -> str:
+def _concatenate_documents(doc_ids: List[str], max_chars: int = 60000) -> str:
     """Concatenate text from multiple documents with headers and proportional truncation.
 
     For each document ID, looks up the PDF in UPLOAD_DIR and the original
@@ -724,33 +744,35 @@ def _concatenate_documents(doc_ids: List[str], max_chars: int = 30000) -> str:
 # ============================================================================
 
 @app.post("/api/generate")
-async def generate_rubric(request: GenerateRequest):
+async def generate_rubric(gen_request: GenerateRequest, request: Request):
     """Generate a rubric from uploaded PDF document(s)."""
+    lang = get_request_language(request)
+    language_name = LANGUAGE_NAMES.get(lang, 'español')
 
     # --- Multi-document path ---
-    if request.document_ids:
-        document_text = _concatenate_documents(request.document_ids)
+    if gen_request.document_ids:
+        document_text = _concatenate_documents(gen_request.document_ids)
         logger.info(
-            f"📄 Concatenated {len(request.document_ids)} documents, "
+            f"📄 Concatenated {len(gen_request.document_ids)} documents, "
             f"{len(document_text)} chars"
         )
     else:
         # --- Single-document backward-compat path ---
-        pdf_path = UPLOAD_DIR / f"{request.document_id}.pdf"
+        pdf_path = UPLOAD_DIR / f"{gen_request.document_id}.pdf"
         if not pdf_path.exists():
-            raise HTTPException(status_code=404, detail="Documento no encontrado.")
+            raise HTTPException(status_code=404, detail=get_message('doc_not_found', lang))
 
         document_text = extract_text_from_pdf(str(pdf_path))
         if not document_text.strip():
             raise HTTPException(
                 status_code=400,
-                detail="No se pudo extraer texto del PDF",
+                detail=get_message('no_text_extracted', lang),
             )
         logger.info(f"📄 Extracted {len(document_text)} chars from PDF")
-        document_text = document_text[:30000]
+        document_text = document_text[:60000]
 
     # --- Semantic search for similar rubrics ---
-    if not request.skip_search:
+    if not gen_request.skip_search:
         try:
             similar = _get_rubric_repository_service().search_similar(document_text[:3000])
             if similar:
@@ -798,8 +820,8 @@ async def generate_rubric(request: GenerateRequest):
 
     # --- Base rubric support ---
     base_rubric_section = ""
-    if request.base_rubric_id:
-        base_rubric = _get_rubric_repository_service().get_rubric(request.base_rubric_id)
+    if gen_request.base_rubric_id:
+        base_rubric = _get_rubric_repository_service().get_rubric(gen_request.base_rubric_id)
         if not base_rubric:
             raise HTTPException(status_code=404, detail="Rúbrica base no encontrada")
         base_rubric_text = base_rubric.get("rubric_text", "")
@@ -810,9 +832,18 @@ async def generate_rubric(request: GenerateRequest):
 
     # Build the message for a direct generator agent (bypasses orchestrator/skill transfers)
     agent_message = (
-        f"Genera una rúbrica de cumplimiento normativo a partir del siguiente documento.\n"
-        f"Nivel de exigencia: {request.level}.\n"
-        f"Instrucciones adicionales: {request.prompt}\n\n"
+        f"[CRITICAL INSTRUCTION: Your ENTIRE response must be written in {language_name}. "
+        f"Every heading, every criterion, every recommendation — ALL in {language_name}.]\n\n"
+        f"[RULES:\n"
+        f"1. ONLY include criteria for topics that are EXPLICITLY mentioned in the document text below.\n"
+        f"2. Do NOT invent requirements, deadlines, or procedures that are not written in the document.\n"
+        f"3. But DO cover EVERY topic mentioned in the document, even briefly — if the document mentions "
+        f"inclusive language, academic dispensation, accessibility, evaluation methods, etc., include a criterion for each.\n"
+        f"4. For each criterion, indicate WHERE in the document it comes from (section name or quote).]\n\n"
+        f"PASO 1: Primero, lee todo el documento e identifica TODOS los temas y requisitos mencionados.\n"
+        f"PASO 2: Luego, genera un criterio de evaluación para CADA tema identificado.\n\n"
+        f"Nivel de exigencia: {gen_request.level}.\n"
+        f"Instrucciones adicionales: {gen_request.prompt}\n\n"
         f"--- TEXTO DEL DOCUMENTO NORMATIVO ---\n{document_text}"
         f"{base_rubric_section}"
     )
@@ -825,24 +856,51 @@ async def generate_rubric(request: GenerateRequest):
         generator_agent = Agent(
             name="generador_directo",
             model=LiteLlm(model="openai/gpt-4o-mini"),
+            generate_content_config=types.GenerateContentConfig(temperature=0.0),
             instruction=(
-                "Eres un ESPECIALISTA EN COMPLIANCE experto en diseño de instrumentos de evaluación normativa.\n\n"
-                "Tu tarea es generar una RÚBRICA DE CUMPLIMIENTO detallada a partir del texto de un documento normativo.\n\n"
+                "Eres un ESPECIALISTA EN COMPLIANCE Y AUDITORÍA NORMATIVA con amplia experiencia en diseño de instrumentos de evaluación.\n\n"
+                "Tu tarea es generar una RÚBRICA DE CUMPLIMIENTO EXHAUSTIVA Y DETALLADA a partir del texto de documentos normativos.\n\n"
+                "### INSTRUCCIONES CRÍTICAS\n\n"
+                "1. LEE CUIDADOSAMENTE todo el texto normativo proporcionado.\n"
+                "2. IDENTIFICA CADA requisito, obligación, condición, plazo, formato y criterio mencionado en los documentos.\n"
+                "3. NO generalices. Cada criterio de la rúbrica debe referirse a un requisito ESPECÍFICO del documento.\n"
+                "4. CITA textualmente las secciones relevantes del documento cuando definas criterios.\n"
+                "5. Genera AL MENOS 15-20 criterios de evaluación, cubriendo TODOS los aspectos del documento.\n\n"
                 "### Estructura obligatoria de la rúbrica\n\n"
-                "1. INFORMACIÓN GENERAL (Ámbito de Aplicación, Nivel de Criticidad, Objetivos)\n"
-                "2. ÁREAS DE CUMPLIMIENTO (Requisitos Legales, Operativos, Técnicos, etc.)\n"
+                "1. INFORMACIÓN GENERAL\n"
+                "   - Ámbito de Aplicación (qué tipo de documento/propuesta evalúa esta rúbrica)\n"
+                "   - Normativa de Referencia (documentos normativos en los que se basa)\n"
+                "   - Nivel de Criticidad\n"
+                "   - Objetivos de la evaluación\n\n"
+                "2. ÁREAS DE CUMPLIMIENTO (desglosadas por sección del documento normativo)\n"
+                "   - Para cada área, lista los requisitos específicos extraídos del documento\n\n"
                 "3. MATRIZ DE EVALUACIÓN. ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN.\n"
-                "   Las columnas de la tabla DEBEN ser: Dimensión | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio.\n"
-                "   ASEGÚRATE de que cada fila tenga exactamente 4 celdas separadas por |.\n"
-                "   ASEGÚRATE de que la línea separadora (-----|-----|...) tenga también 4 secciones.\n"
-                "4. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN\n\n"
+                "   Las columnas DEBEN ser: Dimensión | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio.\n"
+                "   - Cada criterio debe ser ESPECÍFICO y MEDIBLE (no genérico)\n"
+                "   - Las evidencias deben indicar EXACTAMENTE qué buscar en el documento evaluado\n"
+                "   - El nivel mínimo debe ser CONCRETO (ej: 'Documento incluye al menos 3 competencias sello', no 'Adecuado')\n"
+                "   - ASEGÚRATE de que cada fila tenga exactamente 4 celdas separadas por |.\n"
+                "   - Incluye AL MENOS 15 filas en la tabla.\n\n"
+                "4. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN\n"
+                "   - Recomendaciones específicas para cada área de incumplimiento potencial\n\n"
                 "### Reglas Críticas\n"
-                "- NO uses términos vagos como 'efectivo' o 'adecuado' sin definirlos.\n"
-                "- Cada criterio debe tener EVIDENCIAS OBSERVABLES.\n"
-                "- Incluye REQUISITOS MÍNIMOS concretos para aprobar.\n"
+                "- NUNCA uses términos vagos como 'efectivo', 'adecuado', 'apropiado', 'suficiente' sin definir qué significa concretamente.\n"
+                "- NUNCA inventes requisitos que no estén explícitamente en el documento. Si no está escrito, NO lo incluyas.\n"
+                "- Cada criterio DEBE tener una referencia directa al texto del documento (cita o sección).\n"
+                "- Cada criterio debe tener EVIDENCIAS OBSERVABLES y VERIFICABLES.\n"
+                "- Incluye REQUISITOS MÍNIMOS CUANTITATIVOS cuando el documento los especifique (plazos, cantidades, porcentajes, créditos, horas).\n"
+                "- Referencia las secciones específicas del documento normativo.\n"
+                "- Para cada criterio, incluye un EJEMPLO DE CUMPLIMIENTO que muestre cómo se vería un documento que cumple correctamente.\n"
                 "- Usa formato Markdown.\n"
-                "- Sé riguroso, objetivo y profesional.\n"
-                "- Responde SOLO con la rúbrica, sin conversación adicional."
+                "- Sé exhaustivo, riguroso, objetivo y profesional.\n"
+                "- Responde SOLO con la rúbrica, sin conversación adicional.\n"
+                f"- Responde SIEMPRE en {language_name}.\n\n"
+                "### Ejemplo de criterio bien formulado\n"
+                "| Diseño curricular | El programa incluye al menos 2 competencias sello alineadas con el perfil de egreso | "
+                "Listado explícito de competencias sello en la sección de objetivos del programa, con descripción de cómo se evalúan | "
+                "Mínimo 2 competencias sello identificadas y vinculadas a actividades de evaluación. "
+                "EJEMPLO DE CUMPLIMIENTO: 'El programa lista Pensamiento Crítico y Comunicación Efectiva como competencias sello, "
+                "con rúbricas de evaluación específicas para cada una en las actividades 3 y 5' |"
             ),
         )
 
@@ -881,13 +939,13 @@ async def generate_rubric(request: GenerateRequest):
         # Clean any UI tags from the response
         rubric_text = rubric_text.replace("[UI:RubricGenerator]", "").replace("[UI:RubricEvaluator]", "").strip()
 
-        output_filename_txt = f"rubrica_{request.document_id[:8]}.txt"
+        output_filename_txt = f"rubrica_{gen_request.document_id[:8]}.txt"
         output_path_txt = OUTPUT_DIR / output_filename_txt
         with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(rubric_text)
 
         # Generate DOCX version
-        output_filename_docx = f"rubrica_{request.document_id[:8]}.docx"
+        output_filename_docx = f"rubrica_{gen_request.document_id[:8]}.docx"
         output_path_docx = OUTPUT_DIR / output_filename_docx
         md_to_docx(rubric_text, str(output_path_docx))
 
@@ -896,7 +954,7 @@ async def generate_rubric(request: GenerateRequest):
         # Save rubric to local repository folder with descriptive name
         repo_filename = None
         try:
-            doc_ids = request.document_ids if request.document_ids else [request.document_id]
+            doc_ids = gen_request.document_ids if gen_request.document_ids else [gen_request.document_id]
             source_filenames = [_file_id_to_filename.get(did, f"{did}.pdf") for did in doc_ids]
 
             # Generate short descriptive name (max 4 words from first source filename)
@@ -916,7 +974,7 @@ async def generate_rubric(request: GenerateRequest):
 
             # Also store in Qdrant for semantic search
             rubric_id = _get_rubric_repository_service().store_rubric(
-                rubric_text, request.level, source_filenames, doc_ids
+                rubric_text, gen_request.level, source_filenames, doc_ids
             )
             # Save rubric_id mapping for Qdrant cleanup on delete
             if rubric_id:
@@ -933,15 +991,16 @@ async def generate_rubric(request: GenerateRequest):
 
     except Exception as e:
         logger.error(f"❌ Generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generando rúbrica: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"{get_message('generation_error', lang)}: {str(e)}")
 
 
 @app.get("/api/download/{filename}")
-async def download_file(filename: str):
+async def download_file(filename: str, request: Request):
     """Download a generated rubric file."""
+    lang = get_request_language(request)
     file_path = OUTPUT_DIR / filename
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        raise HTTPException(status_code=404, detail=get_message('file_not_found', lang))
 
     # Detect file extension and set appropriate Content-Type
     ext = Path(filename).suffix.lower()
@@ -992,11 +1051,12 @@ async def list_rubric_files():
 
 
 @app.get("/api/rubrics/files/{filename}")
-async def download_rubric_file(filename: str):
+async def download_rubric_file(filename: str, request: Request):
     """Download a rubric file from the local repository."""
+    lang = get_request_language(request)
     file_path = RUBRICS_REPO_DIR / filename
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        raise HTTPException(status_code=404, detail=get_message('file_not_found', lang))
     return FileResponse(
         path=str(file_path),
         filename=filename,
@@ -1005,11 +1065,12 @@ async def download_rubric_file(filename: str):
 
 
 @app.delete("/api/rubrics/files/{filename}")
-async def delete_rubric_file(filename: str):
+async def delete_rubric_file(filename: str, request: Request):
     """Delete a rubric file from the local repository and Qdrant."""
+    lang = get_request_language(request)
     file_path = RUBRICS_REPO_DIR / filename
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        raise HTTPException(status_code=404, detail=get_message('file_not_found', lang))
     file_path.unlink()
     logger.info(f"🗑️ Rubric file deleted: {filename}")
 
@@ -1030,11 +1091,12 @@ async def delete_rubric_file(filename: str):
 
 
 @app.post("/api/rubrics/files/{filename}/replace")
-async def replace_rubric_file(filename: str, file: UploadFile = File(...)):
+async def replace_rubric_file(filename: str, request: Request, file: UploadFile = File(...)):
     """Replace a rubric file in the repo with an edited version. Deletes old from Qdrant and stores new."""
+    lang = get_request_language(request)
     old_path = RUBRICS_REPO_DIR / filename
     if not old_path.exists():
-        raise HTTPException(status_code=404, detail="Archivo original no encontrado")
+        raise HTTPException(status_code=404, detail=get_message('file_not_found', lang))
 
     # Delete old from Qdrant
     meta_filename = Path(filename).stem + ".meta"
@@ -1143,7 +1205,7 @@ async def delete_rubric(rubric_id: str):
 # ============================================================================
 
 @app.post("/api/evaluate/upload_rubric")
-async def upload_rubric(file: UploadFile = File(...)):
+async def upload_rubric(request: Request, file: UploadFile = File(...)):
     """Upload a rubric file for evaluation."""
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
@@ -1159,7 +1221,7 @@ async def upload_rubric(file: UploadFile = File(...)):
 
 
 @app.post("/api/evaluate/upload_doc")
-async def upload_doc(file: UploadFile = File(...)):
+async def upload_doc(request: Request, file: UploadFile = File(...)):
     """Upload a document for evaluation."""
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
@@ -1175,44 +1237,46 @@ async def upload_doc(file: UploadFile = File(...)):
 
 
 @app.post("/api/evaluate/run")
-async def run_evaluation(request: EvaluateRequest):
+async def run_evaluation(eval_request: EvaluateRequest, request: Request):
     """Run evaluation: compare a document against a rubric."""
+    lang = get_request_language(request)
+    language_name = LANGUAGE_NAMES.get(lang, 'español')
 
     # Resolve rubric: from repo filename or uploaded file
     rubric_path = None
-    if request.rubric_filename:
+    if eval_request.rubric_filename:
         # Use rubric from local repository
-        rubric_path = RUBRICS_REPO_DIR / request.rubric_filename
+        rubric_path = RUBRICS_REPO_DIR / eval_request.rubric_filename
         if not rubric_path.exists():
-            raise HTTPException(status_code=404, detail="Rúbrica no encontrada en el repositorio")
-    elif request.rubric_id:
+            raise HTTPException(status_code=404, detail=get_message('rubric_not_found', lang))
+    elif eval_request.rubric_id:
         for ext in [".pdf", ".txt", ".md", ".docx"]:
-            candidate = UPLOAD_DIR / f"rubric_{request.rubric_id}{ext}"
+            candidate = UPLOAD_DIR / f"rubric_{eval_request.rubric_id}{ext}"
             if candidate.exists():
                 rubric_path = candidate
                 break
 
     if not rubric_path:
-        raise HTTPException(status_code=404, detail="Rúbrica no encontrada")
+        raise HTTPException(status_code=404, detail=get_message('rubric_not_found', lang))
 
     doc_path = None
     for ext in [".pdf", ".docx"]:
-        candidate = UPLOAD_DIR / f"doc_{request.doc_id}{ext}"
+        candidate = UPLOAD_DIR / f"doc_{eval_request.doc_id}{ext}"
         if candidate.exists():
             doc_path = candidate
             break
 
     if not doc_path:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
+        raise HTTPException(status_code=404, detail=get_message('doc_not_found', lang))
 
     if rubric_path.suffix.lower() == ".pdf":
         rubric_text = extract_text_from_pdf(str(rubric_path))
         if not rubric_text.strip():
-            raise HTTPException(status_code=400, detail="No se pudo extraer texto de la rúbrica PDF")
+            raise HTTPException(status_code=400, detail=get_message('no_text_extracted', lang))
     elif rubric_path.suffix.lower() == ".docx":
         rubric_text = extract_text_from_docx(str(rubric_path))
         if not rubric_text.strip():
-            raise HTTPException(status_code=400, detail="No se pudo extraer texto de la rúbrica DOCX")
+            raise HTTPException(status_code=400, detail=get_message('no_text_extracted', lang))
     else:
         rubric_text = rubric_path.read_text(encoding="utf-8")
 
@@ -1221,73 +1285,88 @@ async def run_evaluation(request: EvaluateRequest):
     else:
         document_text = extract_text_from_pdf(str(doc_path))
     if not document_text.strip():
-        raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento PDF")
+        raise HTTPException(status_code=400, detail=get_message('no_text_extracted', lang))
 
     logger.info(f"📋 Evaluating: rubric={len(rubric_text)} chars, doc={len(document_text)} chars")
 
-    # Semantic compatibility check: ask LLM if the document matches the rubric's domain
-    rubric_topics = []
-    if request.rubric_filename:
-        meta_path = RUBRICS_REPO_DIR / (Path(request.rubric_filename).stem + ".meta")
-        if meta_path.exists():
-            try:
-                rubric_id_qdrant = meta_path.read_text(encoding="utf-8").strip()
-                rubric_data = _get_rubric_repository_service().get_rubric(rubric_id_qdrant)
-                if rubric_data:
-                    rubric_topics = rubric_data.get("topics", [])
-            except Exception:
-                pass
-
-    if rubric_topics:
+    # Two-step compatibility check: 1) Same institution, 2) Semantic topic similarity
+    if eval_request.rubric_filename:
         try:
             import litellm as _litellm
             import json as _json
 
-            rubric_topics_text = ", ".join(rubric_topics)
-            compatibility_response = _litellm.completion(
-                model="openai/gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": (
-                        "Eres un experto en análisis de documentos normativos. "
-                        "Determina si un documento fue creado para cumplir con los requisitos de una rúbrica específica.\n\n"
-                        "Responde SOLO con un JSON: {\"compatible\": true/false, \"score\": 0-100, \"reason\": \"explicación breve\"}\n\n"
-                        "Un documento es compatible SOLO si fue creado específicamente para cumplir "
-                        "con la normativa que la rúbrica evalúa. Por ejemplo:\n"
-                        "- Una rúbrica sobre 'cursos de formación general' es compatible con un programa de curso CFG, pero NO con un documento sobre microcredenciales.\n"
-                        "- Una rúbrica sobre 'calidad de trabajos académicos' es compatible con una tesis, pero NO con un reglamento administrativo.\n\n"
-                        "Sé estricto: el documento debe pertenecer al mismo tipo de entregable que la rúbrica evalúa."
-                    )},
-                    {"role": "user", "content": (
-                        f"Temas de la rúbrica: {rubric_topics_text}\n\n"
-                        f"Primeros 2000 caracteres del documento:\n{document_text[:2000]}"
-                    )},
-                ],
-                temperature=0.1,
-            )
-            raw_compat = compatibility_response.choices[0].message.content or "{}"
-            raw_compat = raw_compat.strip()
-            if raw_compat.startswith("```"): raw_compat = raw_compat.split("\n", 1)[-1]
-            if raw_compat.endswith("```"): raw_compat = raw_compat.rsplit("```", 1)[0]
-            compat = _json.loads(raw_compat.strip())
+            # Get configured institution from env
+            configured_institution = os.getenv("INSTITUTION_NAME", "")
 
-            is_compatible = compat.get("compatible", True)
-            score = compat.get("score", 100)
-            reason = compat.get("reason", "")
+            meta_path = RUBRICS_REPO_DIR / (Path(eval_request.rubric_filename).stem + ".meta")
+            rubric_data = None
+            if meta_path.exists():
+                rubric_id_qdrant = meta_path.read_text(encoding="utf-8").strip()
+                rubric_data = _get_rubric_repository_service().get_rubric(rubric_id_qdrant)
 
-            logger.info(f"📊 Compatibility: {score}% | Compatible: {is_compatible} | {reason}")
+            if rubric_data:
+                source_filenames = rubric_data.get("source_filenames", [])
+                topics = rubric_data.get("topics", [])
+                rubric_summary = rubric_data.get("summary", "")[:500]
 
-            if not is_compatible and score < 50:
-                return {
-                    "result": (
-                        f"⚠️ El documento no parece ser compatible con esta rúbrica.\n\n"
-                        f"**Temas de la rúbrica:** {rubric_topics_text}\n\n"
-                        f"**Análisis:** {reason}\n\n"
-                        f"**Compatibilidad:** {score}%\n\n"
-                        f"Por favor, seleccioná una rúbrica que corresponda al tema del documento."
-                    ),
-                    "download_url": "",
-                    "topic_mismatch": True,
-                }
+                # STEP 1: Check document belongs to configured institution
+                if configured_institution:
+                    inst_response = _litellm.completion(
+                        model="openai/gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": (
+                                "Determina si el documento pertenece a la institución indicada. "
+                                "Responde SOLO con JSON: {\"belongs\": true/false, \"doc_institution\": \"nombre detectado\"}\n"
+                                "Si no puedes determinar la institución del documento, pon belongs: true."
+                            )},
+                            {"role": "user", "content": (
+                                f"Institución esperada: {configured_institution}\n\n"
+                                f"Documento:\n{document_text[:1500]}"
+                            )},
+                        ],
+                        temperature=0.0,
+                        max_tokens=100,
+                    )
+                    raw_inst = inst_response.choices[0].message.content or "{}"
+                    raw_inst = raw_inst.strip()
+                    if raw_inst.startswith("```"): raw_inst = raw_inst.split("\n", 1)[-1]
+                    if raw_inst.endswith("```"): raw_inst = raw_inst.rsplit("```", 1)[0]
+                    inst = _json.loads(raw_inst.strip())
+
+                    belongs = inst.get("belongs", True)
+                    doc_inst = inst.get("doc_institution", "desconocida")
+
+                    logger.info(f"🏛️ Institution check: expected={configured_institution}, doc={doc_inst}, belongs={belongs}")
+
+                    if not belongs:
+                        return {
+                            "result": get_message('institution_mismatch', lang),
+                            "download_url": "",
+                            "topic_mismatch": True,
+                        }
+
+                # STEP 2: Semantic topic similarity via embeddings
+                topics_text = ", ".join(topics) if topics else rubric_summary
+                rubric_context = f"Temas: {topics_text}. Fuentes: {', '.join(source_filenames)}"
+
+                qdrant = _get_qdrant_service()
+                rubric_vec = qdrant.embed(rubric_context)
+                doc_vec = qdrant.embed(document_text[:2000])
+
+                dot_product = sum(a * b for a, b in zip(rubric_vec, doc_vec))
+                mag_r = sum(a * a for a in rubric_vec) ** 0.5
+                mag_d = sum(a * a for a in doc_vec) ** 0.5
+                similarity = dot_product / (mag_r * mag_d) if mag_r and mag_d else 0
+
+                logger.info(f"📊 Topic similarity: {similarity:.2%} | Topics: {topics}")
+
+                if similarity < 0.40:
+                    return {
+                        "result": get_message('topic_mismatch', lang),
+                        "download_url": "",
+                        "topic_mismatch": True,
+                    }
+
         except Exception as e:
             logger.warning(f"⚠️ Compatibility check failed, proceeding with evaluation: {e}")
 
@@ -1309,6 +1388,7 @@ async def run_evaluation(request: EvaluateRequest):
         evaluator_agent = Agent(
             name="evaluador_directo",
             model=LiteLlm(model="openai/gpt-4o-mini"),
+            generate_content_config=types.GenerateContentConfig(temperature=0.0),
             instruction=(
                 "Eres un experto en auditoría y cumplimiento normativo. "
                 "Tu tarea es evaluar un documento contra una rúbrica de cumplimiento.\n\n"
@@ -1325,7 +1405,8 @@ async def run_evaluation(request: EvaluateRequest):
                 "   ASEGÚRATE de que la línea separadora (-----|-----|...) tenga también 6 secciones.\n"
                 "3. Conclusiones y próximos pasos\n\n"
                 "Sé riguroso, objetivo y profesional. Basa tus comentarios "
-                "exclusivamente en la evidencia del documento."
+                "exclusivamente en la evidencia del documento.\n"
+                f"Responde SIEMPRE en {language_name}."
             ),
         )
 
@@ -1361,13 +1442,13 @@ async def run_evaluation(request: EvaluateRequest):
 
         eval_text = "\n".join(response_parts) if response_parts else "Sin respuesta del evaluador."
 
-        output_filename_txt = f"evaluacion_{request.doc_id[:8]}.txt"
+        output_filename_txt = f"evaluacion_{eval_request.doc_id[:8]}.txt"
         output_path_txt = OUTPUT_DIR / output_filename_txt
         with open(output_path_txt, "w", encoding="utf-8") as f:
             f.write(eval_text)
 
         # Generate DOCX version
-        output_filename_docx = f"evaluacion_{request.doc_id[:8]}.docx"
+        output_filename_docx = f"evaluacion_{eval_request.doc_id[:8]}.docx"
         output_path_docx = OUTPUT_DIR / output_filename_docx
         md_to_docx(eval_text, str(output_path_docx))
 
@@ -1380,7 +1461,7 @@ async def run_evaluation(request: EvaluateRequest):
 
     except Exception as e:
         logger.error(f"❌ Evaluation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error evaluando: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"{get_message('evaluation_error', lang)}: {str(e)}")
 
 
 # ============================================================================

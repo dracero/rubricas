@@ -1,18 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, User, Bot, Sparkles, Download } from 'lucide-react';
+import { Send, User, Bot, Sparkles, Download, AlertCircle } from 'lucide-react';
 import RubricGenerator from './RubricGenerator';
 import RubricEvaluator from './RubricEvaluator';
 import RubricRepository from './RubricRepository';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import MarkdownTable from './MarkdownTable';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const ChatInterface = () => {
+    const { lang, t } = useLanguage();
     const [messages, setMessages] = useState([
         {
             source: 'orchestrator',
             type: 'welcome',
-            content: '¡Hola! Soy RubricAI, tu asistente de cumplimiento normativo. Puedo ayudarte a generar rúbricas a partir de documentos normativos o buscar rúbricas existentes en el repositorio. ¿Qué necesitás?',
+            content: '__WELCOME__',
             timestamp: new Date()
         }
     ]);
@@ -44,8 +46,8 @@ const ChatInterface = () => {
 
         // Directly show the component
         let component = null;
-        if (action.includes('Generar')) component = 'RubricGenerator';
-        else if (action.includes('Repositorio')) component = 'RubricRepository';
+        if (action.includes(t('chat.quick.generate')) || action.includes('Generar')) component = 'RubricGenerator';
+        else if (action.includes(t('chat.quick.repository')) || action.includes('Repositorio')) component = 'RubricRepository';
         else if (action.includes('Evaluar')) component = 'RubricEvaluator';
 
         if (component) {
@@ -77,7 +79,10 @@ const ChatInterface = () => {
         try {
             const res = await fetch('/api/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept-Language': lang,
+                },
                 body: JSON.stringify({ message: userMsg.content })
             });
 
@@ -95,7 +100,7 @@ const ChatInterface = () => {
             setMessages(prev => [...prev, {
                 source: 'orchestrator',
                 type: 'error',
-                content: 'Lo siento, hubo un error de conexión con el servidor.',
+                content: t('chat.error.connection'),
                 timestamp: new Date()
             }]);
         } finally {
@@ -107,19 +112,19 @@ const ChatInterface = () => {
         if (msg.type === 'welcome') {
             return (
                 <div className="space-y-3">
-                    <p>{msg.content}</p>
+                    <p>{t('chat.welcome')}</p>
                     <div className="flex flex-wrap gap-2">
                         <button
-                            onClick={() => handleQuickAction('Generar nueva rúbrica')}
+                            onClick={() => handleQuickAction(t('chat.quick.generate'))}
                             className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-full hover:bg-blue-700 transition"
                         >
-                            📝 Generar rúbrica
+                            📝 {t('chat.quick.generate')}
                         </button>
                         <button
-                            onClick={() => handleQuickAction('Ver Repositorio de rúbricas')}
+                            onClick={() => handleQuickAction(t('chat.quick.repository'))}
                             className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-full hover:bg-amber-600 transition"
                         >
-                            📁 Repositorio
+                            📁 {t('chat.quick.repository')}
                         </button>
                     </div>
                 </div>
@@ -162,7 +167,7 @@ const ChatInterface = () => {
                         className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition mt-3"
                     >
                         <Download className="w-4 h-4" />
-                        Descargar DOCX
+                        {t('chat.download.docx')}
                     </a>
                 )}
             </div>
@@ -238,7 +243,7 @@ const ChatInterface = () => {
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Escribe un mensaje... (ej: 'Quiero crear una rúbrica')"
+                        placeholder={t('chat.placeholder')}
                         className="flex-1 p-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition shadow-sm"
                         disabled={loading}
                     />

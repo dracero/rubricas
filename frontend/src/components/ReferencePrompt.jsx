@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { FileText, Upload, Loader2, ExternalLink } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const typeBadge = (type) => {
     const colors = {
@@ -11,6 +12,7 @@ const typeBadge = (type) => {
 };
 
 const ReferencePrompt = ({ references, batchId, onReferenceUploaded }) => {
+    const { lang, t } = useLanguage();
     const [uploadingRef, setUploadingRef] = useState(null);
     const inputRef = useRef(null);
     const pendingRefIndex = useRef(null);
@@ -48,9 +50,10 @@ const ReferencePrompt = ({ references, batchId, onReferenceUploaded }) => {
             formData.append('files', file);
             const res = await fetch(`/api/upload/batch?batch_id=${batchId}`, {
                 method: 'POST',
+                headers: { 'Accept-Language': lang },
                 body: formData,
             });
-            if (!res.ok) throw new Error('Error subiendo documento referenciado');
+            if (!res.ok) throw new Error(t('reference.error.upload'));
             if (onReferenceUploaded) onReferenceUploaded();
         } catch (err) {
             console.error(err);
@@ -62,10 +65,10 @@ const ReferencePrompt = ({ references, batchId, onReferenceUploaded }) => {
     return (
         <div className="space-y-3">
             <p className="text-sm font-medium text-gray-700">
-                Referencias detectadas
+                {t('reference.title')}
             </p>
             <p className="text-xs text-gray-500">
-                Se encontraron referencias a documentos externos. Si dispones de alguno, puedes subirlo para enriquecer la ontología.
+                {t('reference.description')}
             </p>
 
             <input
@@ -106,7 +109,7 @@ const ReferencePrompt = ({ references, batchId, onReferenceUploaded }) => {
                                     ) : (
                                         <Upload className="w-3 h-3" />
                                     )}
-                                    Tengo este documento
+                                    {t('reference.button.have')}
                                 </button>
                             </li>
                         ))}

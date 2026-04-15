@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Trash2, Download, Upload, Loader2, RefreshCw, FolderOpen } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const formatSize = (bytes) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -17,6 +18,7 @@ const formatDate = (isoStr) => {
 };
 
 const RubricRepository = () => {
+    const { lang, t } = useLanguage();
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [deleting, setDeleting] = useState(null);
@@ -27,7 +29,9 @@ const RubricRepository = () => {
     const fetchFiles = async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/rubrics/files');
+            const res = await fetch('/api/rubrics/files', {
+                headers: { 'Accept-Language': lang },
+            });
             if (!res.ok) throw new Error('Error');
             const data = await res.json();
             setFiles(data.files || []);
@@ -38,10 +42,13 @@ const RubricRepository = () => {
     useEffect(() => { fetchFiles(); }, []);
 
     const handleDelete = async (filename) => {
-        if (!confirm(`¿Eliminar "${filename}"?`)) return;
+        if (!confirm(t('repository.confirm.delete').replace('{filename}', filename))) return;
         setDeleting(filename);
         try {
-            const res = await fetch(`/api/rubrics/files/${filename}`, { method: 'DELETE' });
+            const res = await fetch(`/api/rubrics/files/${filename}`, {
+                method: 'DELETE',
+                headers: { 'Accept-Language': lang },
+            });
             if (res.ok) setFiles(prev => prev.filter(f => f.filename !== filename));
         } catch { /* ignore */ }
         finally { setDeleting(null); }
@@ -63,7 +70,9 @@ const RubricRepository = () => {
             const formData = new FormData();
             formData.append('file', file);
             const res = await fetch(`/api/rubrics/files/${filename}/replace`, {
-                method: 'POST', body: formData,
+                method: 'POST',
+                headers: { 'Accept-Language': lang },
+                body: formData,
             });
             if (res.ok) await fetchFiles();
         } catch { /* ignore */ }
@@ -75,7 +84,7 @@ const RubricRepository = () => {
             <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <FolderOpen className="w-5 h-5 text-amber-600" />
-                    Repositorio de Rúbricas
+                    {t('repository.title')}
                 </h3>
                 <button onClick={fetchFiles} className="text-gray-400 hover:text-gray-600 transition">
                     <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -86,10 +95,10 @@ const RubricRepository = () => {
 
             {loading ? (
                 <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
+                    <Loader2 className="w-4 h-4 animate-spin" /> {t('repository.loading')}
                 </div>
             ) : files.length === 0 ? (
-                <p className="text-sm text-gray-500 py-4">No hay rúbricas guardadas todavía.</p>
+                <p className="text-sm text-gray-500 py-4">{t('repository.empty')}</p>
             ) : (
                 <ul className="space-y-2">
                     {files.map((f) => (
@@ -102,14 +111,14 @@ const RubricRepository = () => {
                                 </span>
                             </span>
                             <span className="flex items-center gap-1 shrink-0 ml-2">
-                                <a href={f.download_url} download className="text-blue-500 hover:text-blue-700 p-1 transition" title="Descargar">
+                                <a href={f.download_url} download className="text-blue-500 hover:text-blue-700 p-1 transition" title={t('repository.action.download')}>
                                     <Download className="w-4 h-4" />
                                 </a>
                                 <button
                                     onClick={() => handleReplaceClick(f.filename)}
                                     disabled={replacing === f.filename}
                                     className="text-amber-500 hover:text-amber-700 p-1 transition disabled:opacity-50"
-                                    title="Subir versión editada"
+                                    title={t('repository.action.replace')}
                                 >
                                     {replacing === f.filename ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                                 </button>
@@ -117,7 +126,7 @@ const RubricRepository = () => {
                                     onClick={() => handleDelete(f.filename)}
                                     disabled={deleting === f.filename}
                                     className="text-gray-400 hover:text-red-500 p-1 transition disabled:opacity-50"
-                                    title="Eliminar"
+                                    title={t('repository.action.delete')}
                                 >
                                     {deleting === f.filename ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                                 </button>
