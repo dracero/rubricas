@@ -1,15 +1,24 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    proxy: {
-      '/api': 'http://localhost:8000',
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, '../', '');
+  return {
+    plugins: [react()],
+    envDir: '../',
+    define: {
+      'import.meta.env.VITE_INSTITUCION': JSON.stringify(env.INSTITUCION || ''),
     },
-    watch: {
-      ignored: ['**/.venv/**', '**/.git/**', '**/__pycache__/**']
-    }
-  },
+    server: {
+      proxy: {
+        '/auth': 'http://localhost:8000',
+        '/api': 'http://localhost:8000',
+        '/uploads': 'http://localhost:8000',
+      },
+      watch: {
+        ignored: ['**/.venv/**', '**/.git/**', '**/__pycache__/**']
+      }
+    },
+  };
 })

@@ -26,3 +26,5 @@ dist/
 .idea/
 .vscode/
 *.swp
+credentials.json
+credentials.json
