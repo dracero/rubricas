@@ -52,9 +52,6 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
     skill_names = [a.name for a in sub_agents]
     logger.info(f"📋 Loaded skills: {skill_names}")
 
-    # Default language for static instruction (per-request language is handled by run_agent in server.py)
-    lang_name = "español"
-
     # Build dynamic routing instructions from loaded skills
     if sub_agents:
         agents_desc = _build_agents_description(sub_agents)
@@ -68,7 +65,7 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
             "4. Si el usuario quiere ayuda para REDACTAR o mejorar un documento → transfiere a `asistente_de_redaccion`\n"
             "5. Si no estás seguro, pregunta al usuario qué necesita.\n\n"
             "REGLAS:\n"
-            f"- SIEMPRE responde en {lang_name}.\n"
+            "- SIEMPRE responde en el idioma que se indica en el mensaje del usuario (busca la directiva [SYSTEM: Respond in ...]).\n"
             "- No intentes hacer las tareas tú mismo, delega siempre al agente apropiado.\n"
             "- Cuando el usuario mencione 'rúbricas guardadas', 'repositorio', 'buscar rúbrica', 'tenés una rúbrica sobre...', SIEMPRE transfiere a `repositorio_de_rubricas`."
         )
@@ -77,7 +74,7 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
             "NOTA: No hay skills cargados actualmente.\n"
             "Informa al usuario que no hay agentes disponibles y que debe subir "
             "skills desde el panel de gestión de Skills en la interfaz.\n"
-            f"Siempre responde en {lang_name}."
+            "Responde en el idioma indicado en el mensaje del usuario."
         )
 
     # Create root orchestrator agent
@@ -85,7 +82,17 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
         name="rubricai_orchestrator",
         model=LiteLlm(model="openai/gpt-4o-mini"),
         instruction=(
-            f"Eres el orquestador del sistema RubricAI de cumplimiento normativo. SIEMPRE responde en {lang_name}.\n\n"
+            "Eres el orquestador del sistema RubricAI de cumplimiento normativo. "
+            "SIEMPRE responde en el idioma que se indica en la directiva [SYSTEM: Respond in ...] del mensaje del usuario.\n\n"
+            "CONOCIMIENTO SOBRE LAS RÚBRICAS GENERADAS:\n"
+            "Las rúbricas que genera este sistema tienen 2 partes: Información General + Matriz de Evaluación.\n"
+            "La matriz tiene 4 columnas:\n"
+            "- 'Área de Cumplimiento': agrupa criterios por área normativa (legal, operativa, técnica, etc.)\n"
+            "- 'Criterio de evaluación': requisito específico y medible extraído del documento normativo\n"
+            "- 'Evidencias observables': elementos concretos y verificables que demuestran el cumplimiento\n"
+            "- 'Nivel mínimo aprobatorio': umbral mínimo para considerar el criterio cumplido, con un ejemplo concreto\n\n"
+            "Si el usuario pregunta sobre el significado de las columnas, los criterios, o cualquier aspecto de una rúbrica generada, "
+            "responde directamente con esta información sin delegar a otro agente.\n\n"
             f"{routing_instructions}"
         ),
         sub_agents=sub_agents,

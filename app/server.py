@@ -370,6 +370,15 @@ async def get_config():
 _current_chat_session_id: Optional[str] = None
 
 
+@app.post("/api/chat/reset")
+async def reset_chat():
+    """Reset the chat session (e.g. when language changes)."""
+    global _current_chat_session_id
+    _current_chat_session_id = None
+    logger.info("🔄 Chat session reset")
+    return {"status": "ok"}
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(chat_request: ChatRequest, request: Request):
     """Main chat endpoint — routes through the root agent."""
@@ -830,23 +839,84 @@ async def generate_rubric(gen_request: GenerateRequest, request: Request):
             f"Usa esta rúbrica como base y adaptala al nuevo documento."
         )
 
-    # Build the message for a direct generator agent (bypasses orchestrator/skill transfers)
-    agent_message = (
-        f"[CRITICAL INSTRUCTION: Your ENTIRE response must be written in {language_name}. "
-        f"Every heading, every criterion, every recommendation — ALL in {language_name}.]\n\n"
-        f"[RULES:\n"
-        f"1. ONLY include criteria for topics that are EXPLICITLY mentioned in the document text below.\n"
-        f"2. Do NOT invent requirements, deadlines, or procedures that are not written in the document.\n"
-        f"3. But DO cover EVERY topic mentioned in the document, even briefly — if the document mentions "
-        f"inclusive language, academic dispensation, accessibility, evaluation methods, etc., include a criterion for each.\n"
-        f"4. For each criterion, indicate WHERE in the document it comes from (section name or quote).]\n\n"
-        f"PASO 1: Primero, lee todo el documento e identifica TODOS los temas y requisitos mencionados.\n"
-        f"PASO 2: Luego, genera un criterio de evaluación para CADA tema identificado.\n\n"
-        f"Nivel de exigencia: {gen_request.level}.\n"
-        f"Instrucciones adicionales: {gen_request.prompt}\n\n"
-        f"--- TEXTO DEL DOCUMENTO NORMATIVO ---\n{document_text}"
-        f"{base_rubric_section}"
-    )
+    # ---- STEP 1: Extract specific requirements from the document via LLM ----
+    institution = os.getenv('INSTITUTION_NAME', '')
+    topics_list = []
+    try:
+        import litellm as _litellm
+
+        topic_response = _litellm.completion(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "Eres un analizador de documentos normativos. "
+                    "Lee el documento y extrae TODOS los requisitos, obligaciones y aspectos evaluables que contiene. "
+                    "Cada requisito debe ser específico (no genérico). "
+                    "Por ejemplo, si el documento habla de dispensa académica y menciona que hay que incluir "
+                    "metodoloxías susceptibles de dispensa Y un sistema de avaliación alternativo, "
+                    "esos son DOS requisitos separados.\n\n"
+                    "Responde SOLO con un JSON array de strings. Cada string es un requisito específico "
+                    "tal como aparece en el documento.\n"
+                    "Ejemplo: [\n"
+                    "  \"Incluír relación de metodoloxías susceptibles de dispensa académica (apartado 5.4)\",\n"
+                    "  \"Incluír sistema de avaliación para estudantado con dispensa concedida (artigo 14.5)\",\n"
+                    "  \"Usar fórmulas inclusivas de referirse ás persoas nas guías docentes\"\n"
+                    "]"
+                )},
+                {"role": "user", "content": f"Extrae todos los requisitos de este documento:\n\n{document_text[:50000]}"},
+            ],
+            temperature=0.0,
+            max_tokens=4000,
+        )
+        raw_topics = topic_response.choices[0].message.content or "[]"
+        logger.info(f"📋 Raw requirements response: {raw_topics[:500]}")
+        # Parse JSON
+        raw_topics = raw_topics.strip()
+        if raw_topics.startswith("```"):
+            raw_topics = raw_topics.split("\n", 1)[-1]
+        if raw_topics.endswith("```"):
+            raw_topics = raw_topics.rsplit("```", 1)[0]
+        raw_topics = raw_topics.strip()
+        try:
+            topics_list = json.loads(raw_topics)
+        except json.JSONDecodeError:
+            logger.warning(f"⚠️ Could not parse requirements JSON: {raw_topics[:200]}")
+            topics_list = []
+        
+        if not isinstance(topics_list, list):
+            topics_list = []
+        
+        logger.info(f"📋 Extracted {len(topics_list)} requirements: {topics_list}")
+    except Exception as e:
+        logger.warning(f"⚠️ Requirement extraction failed: {e}")
+        topics_list = []
+
+    # ---- STEP 2: Generate rubric ----
+    if topics_list:
+        # Use extracted requirements to guide generation
+        numbered_topics = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics_list))
+        topic_count = len(topics_list)
+        agent_message = (
+            f"[IDIOMA: Toda tu respuesta DEBE estar en {language_name}.]\n\n"
+            f"Institución: {institution}\n"
+            f"Nivel de exigencia: {gen_request.level}\n\n"
+            f"Estos son los {topic_count} requisitos extraídos del documento. "
+            f"Genera una fila en la tabla para cada uno:\n\n"
+            f"{numbered_topics}\n\n"
+            f"--- TEXTO DEL DOCUMENTO NORMATIVO ---\n{document_text}"
+            f"{base_rubric_section}"
+        )
+    else:
+        # Fallback: direct generation without requirement extraction
+        logger.warning("⚠️ No requirements extracted, falling back to direct generation")
+        agent_message = (
+            f"[IDIOMA: Toda tu respuesta DEBE estar en {language_name}.]\n\n"
+            f"Institución: {institution}\n"
+            f"Nivel de exigencia: {gen_request.level}\n\n"
+            f"Lee el documento y genera una rúbrica con un criterio por cada requisito que encuentres.\n\n"
+            f"--- TEXTO DEL DOCUMENTO NORMATIVO ---\n{document_text}"
+            f"{base_rubric_section}"
+        )
 
     try:
         # Use a dedicated generator agent to avoid orchestrator transfer issues
@@ -858,49 +928,29 @@ async def generate_rubric(gen_request: GenerateRequest, request: Request):
             model=LiteLlm(model="openai/gpt-4o-mini"),
             generate_content_config=types.GenerateContentConfig(temperature=0.0),
             instruction=(
-                "Eres un ESPECIALISTA EN COMPLIANCE Y AUDITORÍA NORMATIVA con amplia experiencia en diseño de instrumentos de evaluación.\n\n"
-                "Tu tarea es generar una RÚBRICA DE CUMPLIMIENTO EXHAUSTIVA Y DETALLADA a partir del texto de documentos normativos.\n\n"
-                "### INSTRUCCIONES CRÍTICAS\n\n"
-                "1. LEE CUIDADOSAMENTE todo el texto normativo proporcionado.\n"
-                "2. IDENTIFICA CADA requisito, obligación, condición, plazo, formato y criterio mencionado en los documentos.\n"
-                "3. NO generalices. Cada criterio de la rúbrica debe referirse a un requisito ESPECÍFICO del documento.\n"
-                "4. CITA textualmente las secciones relevantes del documento cuando definas criterios.\n"
-                "5. Genera AL MENOS 15-20 criterios de evaluación, cubriendo TODOS los aspectos del documento.\n\n"
-                "### Estructura obligatoria de la rúbrica\n\n"
-                "1. INFORMACIÓN GENERAL\n"
-                "   - Ámbito de Aplicación (qué tipo de documento/propuesta evalúa esta rúbrica)\n"
-                "   - Normativa de Referencia (documentos normativos en los que se basa)\n"
-                "   - Nivel de Criticidad\n"
-                "   - Objetivos de la evaluación\n\n"
-                "2. ÁREAS DE CUMPLIMIENTO (desglosadas por sección del documento normativo)\n"
-                "   - Para cada área, lista los requisitos específicos extraídos del documento\n\n"
-                "3. MATRIZ DE EVALUACIÓN. ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN.\n"
-                "   Las columnas DEBEN ser: Dimensión | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio.\n"
-                "   - Cada criterio debe ser ESPECÍFICO y MEDIBLE (no genérico)\n"
-                "   - Las evidencias deben indicar EXACTAMENTE qué buscar en el documento evaluado\n"
-                "   - El nivel mínimo debe ser CONCRETO (ej: 'Documento incluye al menos 3 competencias sello', no 'Adecuado')\n"
-                "   - ASEGÚRATE de que cada fila tenga exactamente 4 celdas separadas por |.\n"
-                "   - Incluye AL MENOS 15 filas en la tabla.\n\n"
-                "4. RECOMENDACIONES DE MITIGACIÓN O CORRECCIÓN\n"
-                "   - Recomendaciones específicas para cada área de incumplimiento potencial\n\n"
-                "### Reglas Críticas\n"
-                "- NUNCA uses términos vagos como 'efectivo', 'adecuado', 'apropiado', 'suficiente' sin definir qué significa concretamente.\n"
-                "- NUNCA inventes requisitos que no estén explícitamente en el documento. Si no está escrito, NO lo incluyas.\n"
-                "- Cada criterio DEBE tener una referencia directa al texto del documento (cita o sección).\n"
-                "- Cada criterio debe tener EVIDENCIAS OBSERVABLES y VERIFICABLES.\n"
-                "- Incluye REQUISITOS MÍNIMOS CUANTITATIVOS cuando el documento los especifique (plazos, cantidades, porcentajes, créditos, horas).\n"
-                "- Referencia las secciones específicas del documento normativo.\n"
-                "- Para cada criterio, incluye un EJEMPLO DE CUMPLIMIENTO que muestre cómo se vería un documento que cumple correctamente.\n"
-                "- Usa formato Markdown.\n"
-                "- Sé exhaustivo, riguroso, objetivo y profesional.\n"
-                "- Responde SOLO con la rúbrica, sin conversación adicional.\n"
-                f"- Responde SIEMPRE en {language_name}.\n\n"
-                "### Ejemplo de criterio bien formulado\n"
-                "| Diseño curricular | El programa incluye al menos 2 competencias sello alineadas con el perfil de egreso | "
-                "Listado explícito de competencias sello en la sección de objetivos del programa, con descripción de cómo se evalúan | "
-                "Mínimo 2 competencias sello identificadas y vinculadas a actividades de evaluación. "
-                "EJEMPLO DE CUMPLIMIENTO: 'El programa lista Pensamiento Crítico y Comunicación Efectiva como competencias sello, "
-                "con rúbricas de evaluación específicas para cada una en las actividades 3 y 5' |"
+                "Eres un especialista en compliance y auditoría normativa.\n\n"
+                "Tu tarea: recibir una lista de tópicos extraídos de un documento normativo y generar "
+                "una rúbrica de cumplimiento con un criterio por cada tópico.\n\n"
+                "### Reglas\n"
+                "- Genera EXACTAMENTE una fila en la tabla por cada tópico de la lista.\n"
+                "- Usa el texto del documento para formular cada criterio con detalle.\n"
+                "- No agregues filas para temas que no estén en la lista de tópicos.\n"
+                "- No omitas ningún tópico de la lista.\n"
+                "- Evita términos sexistas. Usa lenguaje respetuoso con la igualdad de género.\n"
+                "- No uses términos vagos sin definirlos.\n\n"
+                "### Formato de salida\n\n"
+                "Información general con viñetas (•), cada una con su valor concreto:\n"
+                "• Ámbito de Aplicación: [qué evalúa esta rúbrica]\n"
+                "• Normativa de Referencia: [nombre del documento]\n"
+                "• Nivel de Criticidad: [Alto/Medio/Bajo]\n"
+                "• Objetivos de la evaluación: [propósito]\n\n"
+                "Luego la tabla Markdown con 4 columnas:\n"
+                "| Área de Cumplimiento | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio |\n\n"
+                "La columna 'Nivel mínimo aprobatorio' incluye un umbral concreto y un ejemplo entre paréntesis. "
+                "Formato obligatorio: 'Umbral mínimo (Exemplo: descripción concreta de un caso que cumple)'. "
+                "TODAS las filas deben tener un ejemplo. Sin ejemplo, la fila está incompleta.\n\n"
+                "Responde solo con la rúbrica (viñetas + tabla), sin conversación ni secciones adicionales.\n"
+                f"Responde SIEMPRE en {language_name}.\n"
             ),
         )
 

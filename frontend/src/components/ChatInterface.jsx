@@ -26,6 +26,16 @@ const ChatInterface = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
+    // Reset chat messages when language changes
+    useEffect(() => {
+        setMessages([{
+            source: 'orchestrator',
+            type: 'welcome',
+            content: '__WELCOME__',
+            timestamp: new Date()
+        }]);
+    }, [lang]);
+
     useEffect(() => {
         scrollToBottom();
     }, []);

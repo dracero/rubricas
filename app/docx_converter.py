@@ -15,9 +15,10 @@ from zipfile import BadZipFile
 
 import markdown
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Mm
 from docx.oxml.ns import qn
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.section import WD_ORIENT
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,8 @@ class _DocxHTMLParser(HTMLParser):
         num_rows = len(self._table_rows)
         table = self.doc.add_table(rows=num_rows, cols=num_cols)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        # Allow table to auto-fit to page width
+        table.autofit = True
 
         # Apply borders via XML
         tbl = table._tbl
@@ -104,11 +107,16 @@ class _DocxHTMLParser(HTMLParser):
             for col_idx, cell_text in enumerate(row_data):
                 cell = table.cell(row_idx, col_idx)
                 cell.text = cell_text.strip()
+                # Apply smaller font for table cells to fit landscape
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(8)
                 # Style header row (first row): bold + light gray background
                 if row_idx == 0:
                     for paragraph in cell.paragraphs:
                         for run in paragraph.runs:
                             run.bold = True
+                            run.font.size = Pt(8)
                     shading = cell._element.makeelement(
                         qn("w:shd"),
                         {
@@ -199,11 +207,14 @@ class _DocxHTMLParser(HTMLParser):
 # ---------------------------------------------------------------------------
 
 def md_to_docx(md_text: str, output_path: str) -> None:
-    """Convert Markdown text to a DOCX file.
+    """Convert Markdown text to a landscape-oriented DOCX file.
 
     Parses Markdown into HTML using the ``markdown`` library (with *tables*
     and *fenced_code* extensions), then walks the HTML with a custom
     :class:`HTMLParser` to build a Word document via ``python-docx``.
+
+    The document is set to **landscape** orientation (A4) so that wide
+    evaluation matrices fit comfortably.
 
     Handles:
     - Headings (H1-H3 → Heading 1-3 styles)
@@ -220,13 +231,25 @@ def md_to_docx(md_text: str, output_path: str) -> None:
     """
     doc = Document()
 
+    # Set landscape orientation (A4: 210 × 297 mm → swap width/height)
+    section = doc.sections[0]
+    section.orientation = WD_ORIENT.LANDSCAPE
+    # A4 dimensions swapped for landscape
+    section.page_width = Mm(297)
+    section.page_height = Mm(210)
+    # Tighter margins for more table space
+    section.left_margin = Mm(15)
+    section.right_margin = Mm(15)
+    section.top_margin = Mm(15)
+    section.bottom_margin = Mm(15)
+
     if md_text and md_text.strip():
         html_content = markdown.markdown(
             md_text, extensions=["tables", "fenced_code"]
         )
         parser = _DocxHTMLParser(doc)
         parser.feed(html_content)
-        logger.info("Converted Markdown (%d chars) to DOCX: %s", len(md_text), output_path)
+        logger.info("Converted Markdown (%d chars) to landscape DOCX: %s", len(md_text), output_path)
     else:
         logger.info("Empty Markdown input — writing empty DOCX: %s", output_path)
 
