@@ -32,10 +32,12 @@ load_dotenv()
 
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 
 # Add project root to path
@@ -47,7 +49,7 @@ from app.qdrant_service import TOOL_REGISTRY, _get_qdrant_service
 from app.skill_loader import load_skills
 from app.models import (
     BatchUploadResponse, FileInfo, RejectedFile,
-    BatchStatusResponse, DocumentStatus, DocumentReference, BatchSummary,
+    BatchStatusResponse, DocumentStatus, DocumentReference, BatchSummary,       
     RubricSummary, RubricDetail, RubricListResponse,
 )
 from app.rubric_repository import _get_rubric_repository_service
@@ -59,6 +61,9 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from app.docx_converter import md_to_docx, extract_text_from_docx, detect_rubric_in_response
+from app.auth.router import router as auth_router
+from app.auth.middleware import auth_middleware
+from app.auth.service import get_current_user
 
 
 logging.basicConfig(level=logging.INFO)
@@ -128,6 +133,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SECRET_KEY", "change-me-in-production"),
+)
+app.middleware("http")(auth_middleware)
+app.include_router(auth_router)
 
 # Global state
 runner: Runner = None
@@ -1292,12 +1303,192 @@ async def download_skill(skill_name: str):
 
 
 # ============================================================================
-# Main
+# Uploads / Brand static files
 # ============================================================================
+BRAND_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "uploads" / "brand"
+BRAND_DIR.mkdir(parents=True, exist_ok=True)
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/uploads", StaticFiles(directory=str(BRAND_DIR.parent)), name="uploads")
+
+
+# ============================================================================
+# System status & setup (public — no auth required)
+# ============================================================================
+from app.auth.db import (
+    has_any_admin, get_all_settings, upsert_settings, upsert_setting,
+    create_local_user, get_setting,
+)
+from passlib.context import CryptContext
+_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+@app.get("/api/system/status")
+async def system_status():
+    """Check if the system needs first-time setup."""
+    try:
+        admin_exists = await has_any_admin()
+        settings = await get_all_settings()
+        setup_done = admin_exists and settings.get("INSTITUCION_NOMBRE", "")
+        return {"setup_required": not setup_done}
+    except Exception:
+        return {"setup_required": True}
+
+
+@app.post("/api/system/setup")
+async def system_setup(
+    admin_email: str = Form(None),
+    admin_name: str = Form(None),
+    admin_password: str = Form(None),
+    institucion_nombre: str = Form(None),
+    default_language: str = Form("es"),
+    logo: UploadFile = File(None),
+    background: UploadFile = File(None),
+):
+    """First-time setup wizard endpoint."""
+    # Block if already set up
+    admin_exists = await has_any_admin()
+    if admin_exists:
+        existing = await get_all_settings()
+        if existing.get("INSTITUCION_NOMBRE"):
+            raise HTTPException(status_code=409, detail="El sistema ya fue configurado.")
+
+    if not admin_email or not admin_password or not institucion_nombre:
+        raise HTTPException(status_code=422, detail="Email, contraseña e institución son requeridos.")
+
+    # Create admin user (or promote existing user to admin)
+    hashed = _pwd_ctx.hash(admin_password)
+    try:
+        await create_local_user(admin_email, admin_name or admin_email, hashed, role="admin")
+    except Exception:
+        # User already exists — update password and promote to admin
+        from sqlalchemy import update as sa_update
+        from app.auth.db import users as users_table, get_session
+        async with await get_session() as session:
+            async with session.begin():
+                await session.execute(
+                    sa_update(users_table).where(users_table.c.email == admin_email).values(
+                        hashed_password=hashed, role="admin", name=admin_name or admin_email
+                    )
+                )
+
+    # Save settings to DB
+    await upsert_settings({
+        "INSTITUCION_NOMBRE": institucion_nombre,
+        "DEFAULT_LANGUAGE": default_language,
+    })
+
+    # Save uploaded brand files
+    for file_obj, filename in [(logo, "logo.png"), (background, "background.png")]:
+        if file_obj and file_obj.size:
+            dest = BRAND_DIR / filename
+            contents = await file_obj.read()
+            dest.write_bytes(contents)
+            await upsert_setting(f"BRAND_{filename.split('.')[0].upper()}_URL", f"/uploads/brand/{filename}")
+
+    return {"status": "ok", "message": "Setup completado exitosamente."}
+
+
+# ============================================================================
+# Admin config (read / update)
+# ============================================================================
+# Editable keys that admins can change at runtime
+EDITABLE_KEYS = ["INSTITUCION_NOMBRE", "DEFAULT_LANGUAGE", "AUTH_MODE"]
+
+# Env-only keys shown read-only
+ENV_KEYS = [
+    "DB_TYPE", "VECTOR_MODE", "QDRANT_URL",
+    "ORCHESTRATOR_HOST", "ORCHESTRATOR_PORT",
+    "LANGSMITH_PROJECT", "LANGSMITH_TRACING", "FRONTEND_URL",
+]
+HIDDEN_KEYS = [
+    "GOOGLE_API_KEY", "QDRANT_API_KEY", "SECRET_KEY",
+    "OPENAI_API_KEY", "LANGSMITH_API_KEY",
+]
+
+
+@app.get("/api/config")
+async def get_config(current_user: dict = Depends(get_current_user)):
+    """Fetch system configuration. Only accessible by admins."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="No tienes permisos de administrador")
+
+    db_settings = await get_all_settings()
+
+    config_data = {}
+    # Editable from DB
+    for k in EDITABLE_KEYS:
+        config_data[k] = db_settings.get(k, os.getenv(k, ""))
+    # Read-only from env
+    for k in ENV_KEYS:
+        config_data[k] = os.getenv(k, "")
+    # Sensitive — masked
+    for k in HIDDEN_KEYS:
+        config_data[k] = "********" if os.getenv(k) else ""
+
+    # Brand URLs
+    config_data["BRAND_LOGO_URL"] = db_settings.get("BRAND_LOGO_URL", "")
+    config_data["BRAND_BACKGROUND_URL"] = db_settings.get("BRAND_BACKGROUND_URL", "")
+
+    return {"config": config_data, "editable_keys": EDITABLE_KEYS, "user_role": current_user.get("role")}
+
+
+@app.put("/api/config/settings")
+async def update_settings_json(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update editable settings (JSON). Only admin."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="No tienes permisos de administrador")
+
+    updates = {k: v for k, v in body.items() if k in EDITABLE_KEYS and isinstance(v, str)}
+    if updates:
+        await upsert_settings(updates)
+    return {"status": "ok", "updated": list(updates.keys())}
+
+
+@app.post("/api/config/brand")
+async def upload_brand(
+    logo: UploadFile = File(None),
+    background: UploadFile = File(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload brand files (logo, background). Only admin."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="No tienes permisos de administrador")
+
+    updated = []
+    for file_obj, filename in [(logo, "logo.png"), (background, "background.png")]:
+        if file_obj and file_obj.size:
+            dest = BRAND_DIR / filename
+            contents = await file_obj.read()
+            dest.write_bytes(contents)
+            key = f"BRAND_{filename.split('.')[0].upper()}_URL"
+            await upsert_setting(key, f"/uploads/brand/{filename}")
+            updated.append(key)
+
+    return {"status": "ok", "updated": updated}
+
+
+# ============================================================================
+# Public brand info (no auth, used by frontend before login)
+# ============================================================================
+@app.get("/api/brand")
+async def get_brand():
+    """Return brand URLs and default language for theming before login."""
+    settings = await get_all_settings()
+    return {
+        "institucion_nombre": settings.get("INSTITUCION_NOMBRE", ""),
+        "default_language": settings.get("DEFAULT_LANGUAGE", "es"),
+        "logo_url": settings.get("BRAND_LOGO_URL", ""),
+        "background_url": settings.get("BRAND_BACKGROUND_URL", ""),
+    }
+
 
 def main():
-    """Start the server."""
-    host = os.getenv("ORCHESTRATOR_HOST", "localhost")
+    import uvicorn
+    host = os.getenv("ORCHESTRATOR_HOST", "0.0.0.0")
     port = int(os.getenv("ORCHESTRATOR_PORT", "8000"))
 
     logger.info(f"🚀 Starting RubricAI server on {host}:{port}")

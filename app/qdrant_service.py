@@ -62,15 +62,28 @@ class QdrantService:
         self.config = config
         self.collection_name = "rubricas_entidades"
 
-        # Qdrant client
-        if config.QDRANT_URL and QDRANT_AVAILABLE:
+        # Qdrant client — respects VECTOR_MODE env var
+        vector_mode = os.getenv("VECTOR_MODE", "server").lower()
+
+        if not QDRANT_AVAILABLE:
+            self.client = None
+            logger.warning("⚠️ qdrant-client no instalado")
+        elif vector_mode == "memory":
+            self.client = QdrantClient(location=":memory:")
+            logger.info("Qdrant: modo memoria (efímero)")
+        elif vector_mode == "disk":
+            disk_path = os.getenv("QDRANT_DISK_PATH", "./qdrant_data")
+            self.client = QdrantClient(path=disk_path)
+            logger.info("Qdrant: modo disco (%s)", disk_path)
+        elif config.QDRANT_URL:
             self.client = QdrantClient(
                 url=config.QDRANT_URL,
-                api_key=config.QDRANT_API_KEY
+                api_key=config.QDRANT_API_KEY,
             )
+            logger.info("Qdrant: modo server (%s)", config.QDRANT_URL)
         else:
             self.client = None
-            logger.warning("⚠️ Sin conexión a Qdrant")
+            logger.warning("⚠️ Sin conexión a Qdrant (VECTOR_MODE=%s, sin URL)", vector_mode)
 
         logger.info(f"✅ OpenAI embedding model: {EMBEDDING_MODEL} ({EMBEDDING_DIMENSION}d) [VERSION: {VERSION}]")
 
