@@ -99,7 +99,7 @@ async def lifespan(app_instance: FastAPI):
     global runner, session_service
 
     logger.info("=" * 60)
-    logger.info("🚀 RubricAI Server v2.0 — Skills Architecture")
+    logger.info("🚀 AsistIAG Server v2.0 — Skills Architecture")
     logger.info("=" * 60)
 
     # Setup LangSmith tracing
@@ -118,11 +118,11 @@ async def lifespan(app_instance: FastAPI):
 
     logger.info("✅ Server ready — agent and runner initialized")
     yield
-    logger.info("🛑 Shutting down RubricAI Server")
+    logger.info("🛑 Shutting down AsistIAG Server")
 
 
 app = FastAPI(
-    title="RubricAI Server",
+    title="AsistIAG Server",
     description="Skills-based rubric generation and evaluation system",
     version="2.0.0",
     lifespan=lifespan,
@@ -346,7 +346,7 @@ async def _rebuild_agent():
 async def root():
     """Health check and system info."""
     return {
-        "system": "RubricAI Server",
+        "system": "AsistIAG Server",
         "version": "2.0.0",
         "architecture": "skills-based",
         "status": "running",
@@ -892,6 +892,14 @@ async def generate_rubric(gen_request: GenerateRequest, request: Request):
         topics_list = []
 
     # ---- STEP 2: Generate rubric ----
+    # Map level to percentage and description
+    _LEVEL_INFO = {
+        "inicial": ("60%", "Operacional (Básico)"),
+        "avanzado": ("80%", "Técnico/Regulatorio (Intermedio)"),
+        "critico": ("95%", "Alta Criticidad (Legal)"),
+    }
+    level_pct, level_desc = _LEVEL_INFO.get(gen_request.level, ("80%", "Técnico/Regulatorio"))
+
     if topics_list:
         # Use extracted requirements to guide generation
         numbered_topics = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics_list))
@@ -899,7 +907,7 @@ async def generate_rubric(gen_request: GenerateRequest, request: Request):
         agent_message = (
             f"[IDIOMA: Toda tu respuesta DEBE estar en {language_name}.]\n\n"
             f"Institución: {institution}\n"
-            f"Nivel de exigencia: {gen_request.level}\n\n"
+            f"Nivel de exigencia: {level_desc} — cumplimiento mínimo requerido: {level_pct}\n\n"
             f"Estos son los {topic_count} requisitos extraídos del documento. "
             f"Genera una fila en la tabla para cada uno:\n\n"
             f"{numbered_topics}\n\n"
@@ -912,7 +920,7 @@ async def generate_rubric(gen_request: GenerateRequest, request: Request):
         agent_message = (
             f"[IDIOMA: Toda tu respuesta DEBE estar en {language_name}.]\n\n"
             f"Institución: {institution}\n"
-            f"Nivel de exigencia: {gen_request.level}\n\n"
+            f"Nivel de exigencia: {level_desc} — cumplimiento mínimo requerido: {level_pct}\n\n"
             f"Lee el documento y genera una rúbrica con un criterio por cada requisito que encuentres.\n\n"
             f"--- TEXTO DEL DOCUMENTO NORMATIVO ---\n{document_text}"
             f"{base_rubric_section}"
@@ -938,17 +946,24 @@ async def generate_rubric(gen_request: GenerateRequest, request: Request):
                 "- No omitas ningún tópico de la lista.\n"
                 "- Evita términos sexistas. Usa lenguaje respetuoso con la igualdad de género.\n"
                 "- No uses términos vagos sin definirlos.\n\n"
+                "### Nivel de exigencia y su efecto en los criterios\n"
+                "El nivel de exigencia indicado en el mensaje determina la rigurosidad de los umbrales:\n"
+                "- Operacional (60%): umbrales mínimos, basta con cumplir lo básico. Ejemplo: 'Mencionar al menos 1 método'.\n"
+                "- Técnico/Regulatorio (80%): umbrales moderados, cumplimiento sustancial. Ejemplo: 'Describir al menos 2 métodos con detalle'.\n"
+                "- Alta Criticidad (95%): umbrales estrictos, cumplimiento casi total. Ejemplo: 'Describir todos los métodos con detalle, justificación y evidencia documental'.\n"
+                "A mayor nivel, los umbrales deben ser más exigentes, pedir más cantidad, más detalle y más evidencia.\n\n"
                 "### Formato de salida\n\n"
                 "Información general con viñetas (•), cada una con su valor concreto:\n"
                 "• Ámbito de Aplicación: [qué evalúa esta rúbrica]\n"
                 "• Normativa de Referencia: [nombre del documento]\n"
-                "• Nivel de Criticidad: [Alto/Medio/Bajo]\n"
+                "• Nivel de Criticidad: [descripción del nivel + porcentaje de cumplimiento mínimo requerido]\n"
                 "• Objetivos de la evaluación: [propósito]\n\n"
                 "Luego la tabla Markdown con 4 columnas:\n"
                 "| Área de Cumplimiento | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio |\n\n"
-                "La columna 'Nivel mínimo aprobatorio' incluye un umbral concreto y un ejemplo entre paréntesis. "
-                "Formato obligatorio: 'Umbral mínimo (Exemplo: descripción concreta de un caso que cumple)'. "
-                "TODAS las filas deben tener un ejemplo. Sin ejemplo, la fila está incompleta.\n\n"
+                "La columna 'Nivel mínimo aprobatorio' incluye: el porcentaje de cumplimiento requerido (según el nivel de exigencia indicado), "
+                "un umbral concreto y un ejemplo entre paréntesis. "
+                "Formato obligatorio: '[porcentaje]% — Umbral mínimo (Exemplo: caso concreto que cumple)'. "
+                "TODAS las filas deben tener porcentaje y ejemplo. Sin ellos, la fila está incompleta.\n\n"
                 "Responde solo con la rúbrica (viñetas + tabla), sin conversación ni secciones adicionales.\n"
                 f"Responde SIEMPRE en {language_name}.\n"
             ),
@@ -1421,7 +1436,26 @@ async def run_evaluation(eval_request: EvaluateRequest, request: Request):
             logger.warning(f"⚠️ Compatibility check failed, proceeding with evaluation: {e}")
 
     # Build the evaluation message with inline text
+    # Extract the level from the rubric text to guide evaluation strictness
+    eval_level = "intermedio"
+    eval_level_pct = "80%"
+    rubric_lower = rubric_text.lower()
+    if "95%" in rubric_lower or "alta criticidad" in rubric_lower or "crítico" in rubric_lower:
+        eval_level = "crítico"
+        eval_level_pct = "95%"
+    elif "60%" in rubric_lower or "operacional" in rubric_lower or "básico" in rubric_lower or "inicial" in rubric_lower:
+        eval_level = "inicial"
+        eval_level_pct = "60%"
+
     agent_message = (
+        f"[IDIOMA: Responde en {language_name}.]\n\n"
+        f"Nivel de exigencia de la rúbrica: {eval_level} (cumplimiento mínimo: {eval_level_pct})\n\n"
+        f"IMPORTANTE sobre el nivel de exigencia:\n"
+        f"- Si el nivel es 'inicial' (60%): sé FLEXIBLE al evaluar. Si el documento menciona el tema aunque sea brevemente, marca 'Cumple'. "
+        f"Solo marca 'No Cumple' si el tema está completamente ausente.\n"
+        f"- Si el nivel es 'intermedio' (80%): evalúa con rigor moderado. El documento debe abordar el tema con cierto detalle.\n"
+        f"- Si el nivel es 'crítico' (95%): sé MUY ESTRICTO. El documento debe cubrir cada criterio con detalle completo, "
+        f"evidencia explícita y sin ambigüedades. Cualquier omisión o vaguedad es 'No Cumple' o 'Parcialmente Cumple'.\n\n"
         f"Evalúa el siguiente documento usando esta rúbrica de cumplimiento.\n\n"
         f"--- RÚBRICA ---\n{rubric_text[:20000]}\n\n"
         f"--- DOCUMENTO A EVALUAR ---\n{document_text[:30000]}"
@@ -1442,6 +1476,10 @@ async def run_evaluation(eval_request: EvaluateRequest, request: Request):
             instruction=(
                 "Eres un experto en auditoría y cumplimiento normativo. "
                 "Tu tarea es evaluar un documento contra una rúbrica de cumplimiento.\n\n"
+                "IMPORTANTE: El nivel de exigencia indicado en el mensaje determina tu rigurosidad:\n"
+                "- Nivel inicial (60%): sé flexible. Si el documento menciona el tema, marca Cumple.\n"
+                "- Nivel intermedio (80%): rigor moderado. El tema debe estar desarrollado.\n"
+                "- Nivel crítico (95%): muy estricto. Exige detalle completo y evidencia explícita.\n\n"
                 "Para cada criterio de la rúbrica, determina:\n"
                 "- **Estado:** Cumple / No Cumple / Parcialmente Cumple\n"
                 "- **Evidencia:** Cita textual del documento que justifica el estado\n"
@@ -1454,7 +1492,7 @@ async def run_evaluation(eval_request: EvaluateRequest, request: Request):
                 "   ASEGÚRATE de que cada fila tenga exactamente 6 celdas separadas por |.\n"
                 "   ASEGÚRATE de que la línea separadora (-----|-----|...) tenga también 6 secciones.\n"
                 "3. Conclusiones y próximos pasos\n\n"
-                "Sé riguroso, objetivo y profesional. Basa tus comentarios "
+                "Sé objetivo y profesional. Basa tus comentarios "
                 "exclusivamente en la evidencia del documento.\n"
                 f"Responde SIEMPRE en {language_name}."
             ),
@@ -1686,7 +1724,7 @@ def main():
     host = os.getenv("ORCHESTRATOR_HOST", "localhost")
     port = int(os.getenv("ORCHESTRATOR_PORT", "8000"))
 
-    logger.info(f"🚀 Starting RubricAI server on {host}:{port}")
+    logger.info(f"🚀 Starting AsistIAG server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
 
 

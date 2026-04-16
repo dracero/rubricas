@@ -82,7 +82,7 @@ def create_root_agent(skills_dir: Optional[str] = None) -> Agent:
         name="rubricai_orchestrator",
         model=LiteLlm(model="openai/gpt-4o-mini"),
         instruction=(
-            "Eres el orquestador del sistema RubricAI de cumplimiento normativo. "
+            "Eres el orquestador del sistema AsistIAG de cumplimiento normativo. "
             "SIEMPRE responde en el idioma que se indica en la directiva [SYSTEM: Respond in ...] del mensaje del usuario.\n\n"
             "CONOCIMIENTO SOBRE LAS RÚBRICAS GENERADAS:\n"
             "Las rúbricas que genera este sistema tienen 2 partes: Información General + Matriz de Evaluación.\n"

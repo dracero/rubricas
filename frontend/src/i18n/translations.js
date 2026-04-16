@@ -1,10 +1,10 @@
 export const translations = {
   es: {
     // App header
-    'header.title': 'RubricAI Orchestrator',
+    'header.title': 'AsistIAG Orchestrator',
 
     // ChatInterface
-    'chat.welcome': '¡Hola! Soy RubricAI, tu asistente de cumplimiento normativo. Puedo ayudarte a generar rúbricas a partir de documentos normativos o buscar rúbricas existentes en el repositorio. ¿Qué necesitás?',
+    'chat.welcome': '¡Hola! Soy AsistIAG, tu asistente de cumplimiento normativo. Puedo ayudarte a generar rúbricas a partir de documentos normativos o buscar rúbricas existentes en el repositorio. ¿Qué necesitás?',
     'chat.placeholder': 'Escribe un mensaje... (ej: \'Quiero crear una rúbrica\')',
     'chat.send': 'Enviar',
     'chat.error.connection': 'Lo siento, hubo un error de conexión con el servidor.',
@@ -125,10 +125,10 @@ export const translations = {
 
   gl: {
     // App header
-    'header.title': 'RubricAI Orchestrator',
+    'header.title': 'AsistIAG Orchestrator',
 
     // ChatInterface
-    'chat.welcome': 'Ola! Son RubricAI, o teu asistente de cumprimento normativo. Podo axudarte a xerar rúbricas a partir de documentos normativos ou buscar rúbricas existentes no repositorio. Que precisas?',
+    'chat.welcome': 'Ola! Son AsistIAG, o teu asistente de cumprimento normativo. Podo axudarte a xerar rúbricas a partir de documentos normativos ou buscar rúbricas existentes no repositorio. Que precisas?',
     'chat.placeholder': 'Escribe unha mensaxe... (ex: \'Quero crear unha rúbrica\')',
     'chat.send': 'Enviar',
     'chat.error.connection': 'Sentímolo, houbo un erro de conexión co servidor.',
@@ -249,10 +249,10 @@ export const translations = {
 
   en: {
     // App header
-    'header.title': 'RubricAI Orchestrator',
+    'header.title': 'AsistIAG Orchestrator',
 
     // ChatInterface
-    'chat.welcome': 'Hello! I\'m RubricAI, your regulatory compliance assistant. I can help you generate rubrics from regulatory documents or search for existing rubrics in the repository. What do you need?',
+    'chat.welcome': 'Hello! I\'m AsistIAG, your regulatory compliance assistant. I can help you generate rubrics from regulatory documents or search for existing rubrics in the repository. What do you need?',
     'chat.placeholder': 'Type a message... (e.g., \'I want to create a rubric\')',
     'chat.send': 'Send',
     'chat.error.connection': 'Sorry, there was a connection error with the server.',
@@ -373,10 +373,10 @@ export const translations = {
 
   pt: {
     // App header
-    'header.title': 'RubricAI Orchestrator',
+    'header.title': 'AsistIAG Orchestrator',
 
     // ChatInterface
-    'chat.welcome': 'Olá! Sou o RubricAI, o seu assistente de conformidade regulamentar. Posso ajudá-lo a gerar rubricas a partir de documentos normativos ou procurar rubricas existentes no repositório. O que precisa?',
+    'chat.welcome': 'Olá! Sou o AsistIAG, o seu assistente de conformidade regulamentar. Posso ajudá-lo a gerar rubricas a partir de documentos normativos ou procurar rubricas existentes no repositório. O que precisa?',
     'chat.placeholder': 'Escreva uma mensagem... (ex: \'Quero criar uma rubrica\')',
     'chat.send': 'Enviar',
     'chat.error.connection': 'Desculpe, houve um erro de conexão com o servidor.',

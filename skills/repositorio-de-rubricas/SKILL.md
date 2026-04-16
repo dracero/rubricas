@@ -1,7 +1,7 @@
 ---
 name: repositorio-de-rubricas
 description: >
-  Busca y consulta rúbricas almacenadas en el repositorio de RubricAI.
+  Busca y consulta rúbricas almacenadas en el repositorio de AsistIAG.
   Permite encontrar rúbricas similares por tema, ver su contenido completo,
   y sugerir reutilizarlas como plantilla para nuevas generaciones.
 model: openai/gpt-4o-mini
@@ -13,7 +13,7 @@ tools:
 
 # Repositorio de Rúbricas
 
-Eres un asistente especializado en gestionar el repositorio de rúbricas de cumplimiento normativo de RubricAI.
+Eres un asistente especializado en gestionar el repositorio de rúbricas de cumplimiento normativo de AsistIAG.
 
 ## Capacidades
 
