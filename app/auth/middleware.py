@@ -18,8 +18,16 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/") or any(path.startswith(p) for p in ("/auth/",)):
         return await call_next(request)
 
-    public_api = ("/api/system/status", "/api/system/setup", "/api/brand")
-    if path in public_api:
+    public_api = ("/api/system/status", "/api/system/setup", "/api/brand", "/api/auth/")
+    if (path in public_api
+        or path.startswith("/api/download/")
+        or path.startswith("/api/auth/")
+        or path.startswith("/api/rubrics/")
+        or path.startswith("/api/upload")
+        or path.startswith("/api/generate")
+        or path.startswith("/api/evaluate")
+        or path.startswith("/api/chat")
+        or path.startswith("/api/skills")):
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")

@@ -180,6 +180,7 @@ class EvaluateRequest(BaseModel):
     rubric_id: str = ""
     rubric_filename: str = ""
     doc_id: str
+    force: bool = False
 
 
 # ============================================================================
@@ -452,17 +453,25 @@ async def chat(chat_request: ChatRequest, request: Request):
         metadata["routed_to"] = "writer"
         response_text = response_text.replace("[UI:WritingAssistant]", "").strip()
 
-    # Use simple keyword matching to detect explicit component requests
-    # (no LLM needed — only triggers on obvious, explicit requests)
+    # Use LLM to classify intent if no UI tag was found
     if response_type == "text":
-        msg_lower = user_message.lower().strip()
-        _repo_keywords = {"repositorio", "repository", "ver rúbricas", "listar rúbricas", "rúbricas guardadas", "mis rúbricas"}
-        _eval_keywords = {"evaluar documento", "evaluar cumplimiento", "evaluador", "evaluate document"}
-        _writer_keywords = {"asistente de redacción", "ayuda a redactar", "writing assistant", "redactar documento"}
-        if any(kw in msg_lower for kw in _repo_keywords):
+        intent = _classify_intent(user_message)
+        if intent == "generator":
+            response_type = "action_request"
+            metadata["component"] = "RubricGenerator"
+            metadata["routed_to"] = "generator"
+        elif intent == "evaluator":
+            response_type = "action_request"
+            metadata["component"] = "RubricEvaluator"
+            metadata["routed_to"] = "evaluator"
+        elif intent == "repository":
             response_type = "action_request"
             metadata["component"] = "RubricRepository"
             metadata["routed_to"] = "repository"
+        elif intent == "writer":
+            response_type = "action_request"
+            metadata["component"] = "WritingAssistant"
+            metadata["routed_to"] = "writer"
 
     return ChatResponse(
         source="orchestrator",
@@ -474,7 +483,7 @@ async def chat(chat_request: ChatRequest, request: Request):
 
 
 def _classify_intent(user_msg: str) -> str:
-    """Use LLM to classify user intent into: generator, evaluator, repository, or chat."""
+    """Use LLM to classify user intent into: generator, evaluator, repository, writer, or chat."""
     try:
         import litellm
         response = litellm.completion(
@@ -485,8 +494,9 @@ def _classify_intent(user_msg: str) -> str:
                     "- generator: quiere CREAR o GENERAR una rúbrica nueva a partir de un documento\n"
                     "- evaluator: quiere EVALUAR un documento contra una rúbrica existente\n"
                     "- repository: quiere VER, BUSCAR, LISTAR, MODIFICAR o GESTIONAR rúbricas guardadas en el repositorio\n"
+                    "- writer: quiere ayuda para REDACTAR o MEJORAR un documento usando una rúbrica\n"
                     "- chat: conversación general, preguntas, o cualquier otra cosa\n\n"
-                    "Responde SOLO con una palabra: generator, evaluator, repository, o chat"
+                    "Responde SOLO con una palabra: generator, evaluator, repository, writer, o chat"
                 )},
                 {"role": "user", "content": user_msg},
             ],
@@ -494,7 +504,8 @@ def _classify_intent(user_msg: str) -> str:
             max_tokens=10,
         )
         intent = response.choices[0].message.content.strip().lower()
-        if intent in ("generator", "evaluator", "repository"):
+        logger.info(f"🎯 Intent classified: '{user_msg[:50]}...' → {intent}")
+        if intent in ("generator", "evaluator", "repository", "writer"):
             return intent
     except Exception as e:
         logger.warning(f"⚠️ Intent classification failed: {e}")
@@ -1367,86 +1378,52 @@ async def run_evaluation(eval_request: EvaluateRequest, request: Request):
 
     logger.info(f"📋 Evaluating: rubric={len(rubric_text)} chars, doc={len(document_text)} chars")
 
-    # Two-step compatibility check: 1) Same institution, 2) Semantic topic similarity
-    if eval_request.rubric_filename:
+    # Compatibility check: verify rubric and document are about the same topic
+    if not eval_request.force:
         try:
             import litellm as _litellm
             import json as _json
 
-            # Get configured institution from env
-            configured_institution = os.getenv("INSTITUTION_NAME", "")
+            compat_response = _litellm.completion(
+                model="openai/gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": (
+                        "Determina si una rúbrica de cumplimiento es aplicable a un documento dado. "
+                        "La rúbrica y el documento deben ser del mismo tema/ámbito y preferiblemente de la misma institución. "
+                        "Responde SOLO con JSON: {\"compatible\": true/false, \"reason\": \"explicación breve\"}\n"
+                        "Ejemplos de incompatibilidad:\n"
+                        "- Rúbrica de guías docentes de Universidad A aplicada a documento de Universidad B\n"
+                        "- Rúbrica de normativa académica aplicada a documento financiero\n"
+                        "Si no estás seguro, pon compatible: true."
+                    )},
+                    {"role": "user", "content": (
+                        f"RÚBRICA (primeros 1500 chars):\n{rubric_text[:1500]}\n\n"
+                        f"DOCUMENTO A EVALUAR (primeros 1500 chars):\n{document_text[:1500]}"
+                    )},
+                ],
+                temperature=0.0,
+                max_tokens=200,
+            )
+            raw_compat = compat_response.choices[0].message.content or "{}"
+            raw_compat = raw_compat.strip()
+            if raw_compat.startswith("```"): raw_compat = raw_compat.split("\n", 1)[-1]
+            if raw_compat.endswith("```"): raw_compat = raw_compat.rsplit("```", 1)[0]
+            compat = _json.loads(raw_compat.strip())
 
-            meta_path = RUBRICS_REPO_DIR / (Path(eval_request.rubric_filename).stem + ".meta")
-            rubric_data = None
-            if meta_path.exists():
-                rubric_id_qdrant = meta_path.read_text(encoding="utf-8").strip()
-                rubric_data = _get_rubric_repository_service().get_rubric(rubric_id_qdrant)
+            is_compatible = compat.get("compatible", True)
+            reason = compat.get("reason", "")
+            logger.info(f"🔍 Compatibility check: compatible={is_compatible}, reason={reason}")
 
-            if rubric_data:
-                source_filenames = rubric_data.get("source_filenames", [])
-                topics = rubric_data.get("topics", [])
-                rubric_summary = rubric_data.get("summary", "")[:500]
-
-                # STEP 1: Check document belongs to configured institution
-                if configured_institution:
-                    inst_response = _litellm.completion(
-                        model="openai/gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": (
-                                "Determina si el documento pertenece a la institución indicada. "
-                                "Responde SOLO con JSON: {\"belongs\": true/false, \"doc_institution\": \"nombre detectado\"}\n"
-                                "Si no puedes determinar la institución del documento, pon belongs: true."
-                            )},
-                            {"role": "user", "content": (
-                                f"Institución esperada: {configured_institution}\n\n"
-                                f"Documento:\n{document_text[:1500]}"
-                            )},
-                        ],
-                        temperature=0.0,
-                        max_tokens=100,
-                    )
-                    raw_inst = inst_response.choices[0].message.content or "{}"
-                    raw_inst = raw_inst.strip()
-                    if raw_inst.startswith("```"): raw_inst = raw_inst.split("\n", 1)[-1]
-                    if raw_inst.endswith("```"): raw_inst = raw_inst.rsplit("```", 1)[0]
-                    inst = _json.loads(raw_inst.strip())
-
-                    belongs = inst.get("belongs", True)
-                    doc_inst = inst.get("doc_institution", "desconocida")
-
-                    logger.info(f"🏛️ Institution check: expected={configured_institution}, doc={doc_inst}, belongs={belongs}")
-
-                    if not belongs:
-                        return {
-                            "result": get_message('institution_mismatch', lang),
-                            "download_url": "",
-                            "topic_mismatch": True,
-                        }
-
-                # STEP 2: Semantic topic similarity via embeddings
-                topics_text = ", ".join(topics) if topics else rubric_summary
-                rubric_context = f"Temas: {topics_text}. Fuentes: {', '.join(source_filenames)}"
-
-                qdrant = _get_qdrant_service()
-                rubric_vec = qdrant.embed(rubric_context)
-                doc_vec = qdrant.embed(document_text[:2000])
-
-                dot_product = sum(a * b for a, b in zip(rubric_vec, doc_vec))
-                mag_r = sum(a * a for a in rubric_vec) ** 0.5
-                mag_d = sum(a * a for a in doc_vec) ** 0.5
-                similarity = dot_product / (mag_r * mag_d) if mag_r and mag_d else 0
-
-                logger.info(f"📊 Topic similarity: {similarity:.2%} | Topics: {topics}")
-
-                if similarity < 0.25:
-                    return {
-                        "result": get_message('topic_mismatch', lang),
-                        "download_url": "",
-                        "topic_mismatch": True,
-                    }
-
+            if not is_compatible:
+                return {
+                    "result": "",
+                    "download_url": "",
+                    "topic_mismatch": True,
+                    "mismatch_reason": reason,
+                    "can_force": True,
+                }
         except Exception as e:
-            logger.warning(f"⚠️ Compatibility check failed, proceeding with evaluation: {e}")
+            logger.warning(f"⚠️ Compatibility check failed, proceeding: {e}")
 
     # Build the evaluation message with inline text
     # Extract the level from the rubric text to guide evaluation strictness
@@ -1563,6 +1540,148 @@ async def run_evaluation(eval_request: EvaluateRequest, request: Request):
     except Exception as e:
         logger.error(f"❌ Evaluation error: {e}")
         raise HTTPException(status_code=500, detail=f"{get_message('evaluation_error', lang)}: {str(e)}")
+
+
+# ============================================================================
+# API Endpoints - Auto-Correct Document
+# ============================================================================
+
+class AutoCorrectRequest(BaseModel):
+    rubric_filename: str = ""
+    rubric_id: str = ""
+    doc_id: str
+    evaluation_result: str = ""
+
+
+@app.post("/api/evaluate/autocorrect")
+async def autocorrect_document(req: AutoCorrectRequest, request: Request):
+    """Auto-correct a document to comply with a rubric based on evaluation results."""
+    lang = get_request_language(request)
+    language_name = LANGUAGE_NAMES.get(lang, 'español')
+
+    # Resolve rubric text
+    rubric_text = ""
+    if req.rubric_filename:
+        rubric_path = RUBRICS_REPO_DIR / req.rubric_filename
+        if rubric_path.exists():
+            if rubric_path.suffix.lower() == ".docx":
+                rubric_text = extract_text_from_docx(str(rubric_path))
+            else:
+                rubric_text = rubric_path.read_text(encoding="utf-8")
+    elif req.rubric_id:
+        for ext in [".pdf", ".txt", ".md", ".docx"]:
+            candidate = UPLOAD_DIR / f"rubric_{req.rubric_id}{ext}"
+            if candidate.exists():
+                if ext == ".docx":
+                    rubric_text = extract_text_from_docx(str(candidate))
+                elif ext == ".pdf":
+                    rubric_text = extract_text_from_pdf(str(candidate))
+                else:
+                    rubric_text = candidate.read_text(encoding="utf-8")
+                break
+
+    if not rubric_text.strip():
+        raise HTTPException(status_code=404, detail="No se pudo leer la rúbrica")
+
+    # Resolve document text
+    doc_path = None
+    for ext in [".pdf", ".docx"]:
+        candidate = UPLOAD_DIR / f"doc_{req.doc_id}{ext}"
+        if candidate.exists():
+            doc_path = candidate
+            break
+    if not doc_path:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    if doc_path.suffix.lower() == ".docx":
+        document_text = extract_text_from_docx(str(doc_path))
+    else:
+        document_text = extract_text_from_pdf(str(doc_path))
+
+    if not document_text.strip():
+        raise HTTPException(status_code=400, detail="No se pudo extraer texto del documento")
+
+    logger.info(f"🔧 Auto-correcting document: {len(document_text)} chars against rubric: {len(rubric_text)} chars")
+
+    try:
+        from google.adk.agents import Agent
+        from google.adk.models.lite_llm import LiteLlm
+
+        corrector_agent = Agent(
+            name="corrector_directo",
+            model=LiteLlm(model="openai/gpt-4o-mini"),
+            generate_content_config=types.GenerateContentConfig(temperature=0.0),
+            instruction=(
+                "Eres un experto en redacción normativa y cumplimiento. "
+                "Tu tarea es corregir un documento para que cumpla con TODOS los criterios de una rúbrica.\n\n"
+                "Recibirás:\n"
+                "1. La rúbrica con los criterios de evaluación\n"
+                "2. El documento original\n"
+                "3. El resultado de la evaluación (qué criterios no cumple)\n\n"
+                "Debes generar una versión CORREGIDA del documento que:\n"
+                "- Mantenga todo el contenido original que ya cumple\n"
+                "- Agregue o modifique las secciones necesarias para cumplir los criterios fallidos\n"
+                "- Marque con [AGREGADO] o [MODIFICADO] las partes que cambiaste\n"
+                "- No elimine contenido existente a menos que sea incorrecto\n\n"
+                "Responde SOLO con el documento corregido, sin conversación adicional.\n"
+                f"Responde en {language_name}."
+            ),
+        )
+
+        agent_message = (
+            f"Corrige este documento para que cumpla con todos los criterios de la rúbrica.\n\n"
+            f"--- RÚBRICA ---\n{rubric_text[:15000]}\n\n"
+            f"--- RESULTADO DE EVALUACIÓN ---\n{req.evaluation_result[:10000]}\n\n"
+            f"--- DOCUMENTO ORIGINAL ---\n{document_text[:25000]}"
+        )
+
+        corr_session_service = InMemorySessionService()
+        corr_runner = Runner(
+            agent=corrector_agent,
+            app_name="rubricai_corrector",
+            session_service=corr_session_service,
+        )
+
+        corr_sid = str(uuid.uuid4())
+        await corr_session_service.create_session(
+            app_name="rubricai_corrector",
+            user_id=USER_ID,
+            session_id=corr_sid,
+        )
+
+        user_content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=agent_message)]
+        )
+
+        response_parts = []
+        async for event in corr_runner.run_async(
+            user_id=USER_ID,
+            session_id=corr_sid,
+            new_message=user_content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        response_parts.append(part.text)
+
+        corrected_text = "\n".join(response_parts) if response_parts else "Sin respuesta del corrector."
+
+        # Generate DOCX
+        output_filename = f"documento_corregido_{req.doc_id[:8]}.docx"
+        output_path = OUTPUT_DIR / output_filename
+        md_to_docx(corrected_text, str(output_path))
+
+        logger.info(f"✅ Document auto-corrected: {output_filename}")
+
+        return {
+            "result": corrected_text,
+            "download_url": f"/api/download/{output_filename}",
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Auto-correct error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error corrigiendo documento: {str(e)}")
 
 
 # ============================================================================
