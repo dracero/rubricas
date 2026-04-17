@@ -3,6 +3,7 @@ import { Send, User, Bot, Sparkles, Download, AlertCircle } from 'lucide-react';
 import RubricGenerator from './RubricGenerator';
 import RubricEvaluator from './RubricEvaluator';
 import RubricRepository from './RubricRepository';
+import WritingAssistant from './WritingAssistant';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import MarkdownTable from './MarkdownTable';
@@ -24,6 +25,50 @@ const ChatInterface = () => {
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    // Send a message programmatically (used by WritingAssistant when rubric is selected)
+    const sendMessage = async (text) => {
+        const userMsg = {
+            source: 'user',
+            type: 'text',
+            content: text,
+            timestamp: new Date()
+        };
+        setMessages(prev => [...prev, userMsg]);
+        setLoading(true);
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept-Language': lang,
+                },
+                body: JSON.stringify({ message: text })
+            });
+            if (!res.ok) throw new Error('Error de conexión');
+            const data = await res.json();
+            setMessages(prev => [...prev, { ...data, timestamp: new Date() }]);
+        } catch (error) {
+            setMessages(prev => [...prev, {
+                source: 'orchestrator',
+                type: 'error',
+                content: t('chat.error.connection'),
+                timestamp: new Date()
+            }]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRubricSelected = (rubricInfo) => {
+        // Auto-send a message to the chat telling the agent which rubric to use
+        const msg = `Quiero que me ayudes a redactar un documento usando como referencia la rúbrica "${rubricInfo.filename}". ` +
+            `Los temas de la rúbrica son: ${rubricInfo.topics.join(', ') || 'N/A'}. ` +
+            `Por favor, busca esta rúbrica en el repositorio con obtener_rubrica_completa y usa buscar_contexto_qdrant para obtener el contexto normativo asociado. ` +
+            `Luego indícame cómo debería estructurar el documento para cumplir con todos los criterios.`;
+        sendMessage(msg);
     };
 
     // Reset chat messages when language changes
@@ -155,6 +200,9 @@ const ChatInterface = () => {
                         {componentType === 'RubricRepository' && (
                             <RubricRepository />
                         )}
+                        {componentType === 'WritingAssistant' && (
+                            <WritingAssistant onRubricSelected={handleRubricSelected} />
+                        )}
                     </div>
                 </div>
             );
@@ -185,7 +233,7 @@ const ChatInterface = () => {
     };
 
     return (
-        <div className="flex flex-col h-[calc(100vh-100px)] bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+        <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6">

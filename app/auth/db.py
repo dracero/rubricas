@@ -41,10 +41,19 @@ app_settings = Table(
 # ---------------------------------------------------------------------------
 _engine = None
 _session_factory = None
+_init_lock = None  # Will be created on first use (needs event loop)
+
+
+async def _get_init_lock():
+    global _init_lock
+    if _init_lock is None:
+        import asyncio
+        _init_lock = asyncio.Lock()
+    return _init_lock
 
 
 def _build_database_url() -> str:
-    db_type = os.getenv("DB_TYPE", "local").lower()
+    db_type = os.getenv("DB_TYPE", "auto").lower()
 
     if db_type == "sqlite":
         db_path = os.getenv("SQLITE_PATH", "data/rubricai.db")
@@ -56,11 +65,9 @@ def _build_database_url() -> str:
         password = os.getenv("CLOUDSQL_DB_PASS", "")
         db = os.getenv("CLOUDSQL_DB_NAME", "rubricai_auth")
         instance = os.getenv("CLOUDSQL_INSTANCE", "")
-        # Cloud SQL Connector handles the actual socket; we use asyncpg creator
-        # Return a placeholder — _get_engine overrides with `creator`
         return f"postgresql+asyncpg://{user}:{password}@/{db}"
 
-    # local postgres
+    # "local" or "auto" → PostgreSQL
     host = os.getenv("LOCAL_DB_HOST", "localhost")
     port = os.getenv("LOCAL_DB_PORT", "5432")
     user = os.getenv("LOCAL_DB_USER", "postgres")
@@ -69,54 +76,82 @@ def _build_database_url() -> str:
     return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
 
 
+def _build_sqlite_fallback_url() -> str:
+    db_path = os.getenv("SQLITE_PATH", "data/rubricai.db")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite+aiosqlite:///{db_path}"
+
+
 async def _get_engine():
     global _engine, _session_factory
-    if _engine is not None:
+    if _engine is not None and _session_factory is not None:
         return _engine
 
-    db_type = os.getenv("DB_TYPE", "local").lower()
-    url = _build_database_url()
+    lock = await _get_init_lock()
+    async with lock:
+        # Double-check after acquiring lock
+        if _engine is not None and _session_factory is not None:
+            return _engine
 
-    if db_type == "cloudsql":
-        from google.cloud.sql.connector import Connector, IPTypes
-        import asyncio
+        db_type = os.getenv("DB_TYPE", "auto").lower()
+        url = _build_database_url()
 
-        key_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        loop = asyncio.get_running_loop()
-        if key_file:
-            from google.oauth2 import service_account
-            creds = service_account.Credentials.from_service_account_file(
-                key_file, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-            )
-            connector = Connector(credentials=creds, loop=loop)
+        if db_type == "cloudsql":
+            from google.cloud.sql.connector import Connector, IPTypes
+            import asyncio
+
+            key_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            loop = asyncio.get_running_loop()
+            if key_file:
+                from google.oauth2 import service_account
+                creds = service_account.Credentials.from_service_account_file(
+                    key_file, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+                connector = Connector(credentials=creds, loop=loop)
+            else:
+                connector = Connector(loop=loop)
+
+            instance = os.getenv("CLOUDSQL_INSTANCE")
+            use_iam = os.getenv("CLOUDSQL_USE_IAM", "false").lower() == "true"
+
+            async def getconn():
+                return await connector.connect_async(
+                    instance, "asyncpg",
+                    user=os.getenv("CLOUDSQL_DB_USER"),
+                    password=None if use_iam else os.getenv("CLOUDSQL_DB_PASS"),
+                    db=os.getenv("CLOUDSQL_DB_NAME", "rubricai_auth"),
+                    enable_iam_auth=use_iam,
+                    ip_type=IPTypes.PUBLIC,
+                )
+
+            _engine = create_async_engine(url, async_creator=getconn, pool_size=5, max_overflow=5)
+            logger.info("Cloud SQL engine created (%s)", instance)
+        elif db_type == "sqlite":
+            _engine = create_async_engine(url, pool_size=1)
+            logger.info("DB engine created (sqlite)")
         else:
-            connector = Connector(loop=loop)
+            # "local" or "auto" → try PostgreSQL, fallback to SQLite
+            try:
+                _engine = create_async_engine(url, pool_size=5)
+                # Test the connection
+                async with _engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
+                logger.info("DB engine created (postgresql)")
+            except Exception as pg_err:
+                logger.warning("⚠️ PostgreSQL connection failed: %s", pg_err)
+                logger.info("🔄 Falling back to SQLite...")
+                if _engine:
+                    await _engine.dispose()
+                fallback_url = _build_sqlite_fallback_url()
+                _engine = create_async_engine(fallback_url, pool_size=1)
+                logger.info("DB engine created (sqlite fallback)")
 
-        instance = os.getenv("CLOUDSQL_INSTANCE")
-        use_iam = os.getenv("CLOUDSQL_USE_IAM", "false").lower() == "true"
+        _session_factory = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
-        async def getconn():
-            return await connector.connect_async(
-                instance, "asyncpg",
-                user=os.getenv("CLOUDSQL_DB_USER"),
-                password=None if use_iam else os.getenv("CLOUDSQL_DB_PASS"),
-                db=os.getenv("CLOUDSQL_DB_NAME", "rubricai_auth"),
-                enable_iam_auth=use_iam,
-                ip_type=IPTypes.PUBLIC,
-            )
-
-        _engine = create_async_engine(url, async_creator=getconn, pool_size=5, max_overflow=5)
-        logger.info("Cloud SQL engine created (%s)", instance)
-    else:
-        _engine = create_async_engine(url, pool_size=5 if "sqlite" not in url else 1)
-        logger.info("DB engine created (%s)", db_type)
-
-    _session_factory = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
-
-    # Create tables
-    async with _engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
-    logger.info("Auth + settings schema ready")
+        # Create tables
+        async with _engine.begin() as conn:
+            await conn.run_sync(metadata.create_all)
+        logger.info("Auth + settings schema ready")
 
     return _engine
 

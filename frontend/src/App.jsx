@@ -112,10 +112,10 @@ function AppShell() {
 
       {/* Contenedor Blanco Dinámico (Canvas) */}
       <div 
-        className={`bg-white border shadow-2xl rounded-3xl overflow-hidden flex flex-col transition-all duration-700 ease-in-out origin-center
+        className={`bg-white border shadow-2xl rounded-3xl overflow-hidden flex flex-col transition-all duration-700 ease-in-out origin-center z-[110]
           ${isLanding 
             ? 'w-full max-w-3xl border-blue-100 min-h-[400px]' 
-            : 'w-[95vw] md:w-[70vw] h-[85vh] border-gray-200'
+            : 'w-[95vw] md:w-[85vw] lg:w-[90vw] h-[90vh] border-gray-200'
           }`}
       >
         {showSettings ? (

@@ -52,6 +52,19 @@ export const translations = {
     'evaluator.button.evaluate': 'Iniciar Evaluación',
     'evaluator.button.evaluating': 'Analizando...',
 
+    // WritingAssistant
+    'writer.title': 'Asistente de Redacción',
+    'writer.description': 'Selecciona una rúbrica de referencia. El asistente usará sus criterios para guiar la redacción y asegurar el cumplimiento.',
+    'writer.rubric.loaded': 'Rúbrica cargada como referencia',
+    'writer.topics': 'Temas',
+    'writer.ready': 'Ahora puedes escribir en el chat y el asistente validará contra esta rúbrica.',
+    'writer.change.rubric': 'Cambiar rúbrica',
+    'writer.rubric.label': 'Rúbrica de referencia',
+    'writer.no.rubrics': 'No hay rúbricas en el repositorio. Generá una primero.',
+    'writer.rubric.select': 'Seleccionar rúbrica...',
+    'writer.button.loading': 'Cargando...',
+    'writer.button.load': 'Cargar rúbrica de referencia',
+
     // RubricRepository
     'repository.title': 'Repositorio de Rúbricas',
     'repository.loading': 'Cargando...',
@@ -175,6 +188,19 @@ export const translations = {
     'evaluator.error.evaluate': 'Erro na avaliación',
     'evaluator.button.evaluate': 'Iniciar Avaliación',
     'evaluator.button.evaluating': 'Analizando...',
+
+    // WritingAssistant
+    'writer.title': 'Asistente de Redacción',
+    'writer.description': 'Selecciona unha rúbrica de referencia. O asistente usará os seus criterios para guiar a redacción e asegurar o cumprimento.',
+    'writer.rubric.loaded': 'Rúbrica cargada como referencia',
+    'writer.topics': 'Temas',
+    'writer.ready': 'Agora podes escribir no chat e o asistente validará contra esta rúbrica.',
+    'writer.change.rubric': 'Cambiar rúbrica',
+    'writer.rubric.label': 'Rúbrica de referencia',
+    'writer.no.rubrics': 'Non hai rúbricas no repositorio. Xera unha primeiro.',
+    'writer.rubric.select': 'Seleccionar rúbrica...',
+    'writer.button.loading': 'Cargando...',
+    'writer.button.load': 'Cargar rúbrica de referencia',
 
     // RubricRepository
     'repository.title': 'Repositorio de Rúbricas',
@@ -300,6 +326,19 @@ export const translations = {
     'evaluator.button.evaluate': 'Start Evaluation',
     'evaluator.button.evaluating': 'Analyzing...',
 
+    // WritingAssistant
+    'writer.title': 'Writing Assistant',
+    'writer.description': 'Select a reference rubric. The assistant will use its criteria to guide writing and ensure compliance.',
+    'writer.rubric.loaded': 'Rubric loaded as reference',
+    'writer.topics': 'Topics',
+    'writer.ready': 'You can now write in the chat and the assistant will validate against this rubric.',
+    'writer.change.rubric': 'Change rubric',
+    'writer.rubric.label': 'Reference rubric',
+    'writer.no.rubrics': 'No rubrics in the repository. Generate one first.',
+    'writer.rubric.select': 'Select rubric...',
+    'writer.button.loading': 'Loading...',
+    'writer.button.load': 'Load reference rubric',
+
     // RubricRepository
     'repository.title': 'Rubric Repository',
     'repository.loading': 'Loading...',
@@ -423,6 +462,19 @@ export const translations = {
     'evaluator.error.evaluate': 'Erro na avaliação',
     'evaluator.button.evaluate': 'Iniciar Avaliação',
     'evaluator.button.evaluating': 'A analisar...',
+
+    // WritingAssistant
+    'writer.title': 'Assistente de Redação',
+    'writer.description': 'Selecione uma rubrica de referência. O assistente usará os seus critérios para guiar a redação e garantir a conformidade.',
+    'writer.rubric.loaded': 'Rubrica carregada como referência',
+    'writer.topics': 'Temas',
+    'writer.ready': 'Agora pode escrever no chat e o assistente validará contra esta rubrica.',
+    'writer.change.rubric': 'Mudar rubrica',
+    'writer.rubric.label': 'Rubrica de referência',
+    'writer.no.rubrics': 'Não há rubricas no repositório. Gere uma primeiro.',
+    'writer.rubric.select': 'Selecionar rubrica...',
+    'writer.button.loading': 'A carregar...',
+    'writer.button.load': 'Carregar rubrica de referência',
 
     // RubricRepository
     'repository.title': 'Repositório de Rubricas',

@@ -11,8 +11,8 @@ os.environ.setdefault("PASSLIB_BUILTIN_BCRYPT", "enabled")
 
 from app.auth.service import hash_password
 
-EMAIL = "rodrigo.diaz.o@uchile.cl"
-PASSWORD = EMAIL
+EMAIL = "dracero@fi.uba.ar"
+PASSWORD = "Junin2005*"
 
 
 async def main() -> None:
@@ -35,12 +35,12 @@ async def main() -> None:
 
         created = await conn.fetchrow(
             """
-            INSERT INTO users (email, name, provider, hashed_password)
-            VALUES ($1, $2, 'local', $3)
+            INSERT INTO users (email, name, provider, hashed_password, role)
+            VALUES ($1, $2, 'local', $3, 'admin')
             RETURNING email
             """,
             EMAIL,
-            "Rodrigo Diaz",
+            "Diego Racero",
             hash_password(PASSWORD),
         )
         print(f"Usuario creado: {created['email']}")
