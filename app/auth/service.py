@@ -44,3 +44,27 @@ async def get_current_user(
     if not user or not user["is_active"]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+def require_role(*roles: str):
+    """
+    FastAPI dependency factory que exige que el usuario tenga uno de los roles indicados.
+
+    Uso:
+        @router.get("/admin-only", dependencies=[Depends(require_role("admin"))])
+        @router.post("/admin-or-mod", dependencies=[Depends(require_role("admin", "moderator"))])
+    """
+    async def _check(current_user=Depends(get_current_user)):
+        if current_user.get("role") not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Se requiere rol: {' o '.join(roles)}",
+            )
+        return current_user
+    return _check
+
+
+# Shortcuts listos para usar como dependencias
+require_admin = require_role("admin")
+# verificador puede evaluar/verificar documentos; admin también
+require_verificador = require_role("admin", "verificador")

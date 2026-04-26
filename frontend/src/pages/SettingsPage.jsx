@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
-import { Settings, ShieldAlert, ArrowLeft, Loader2, RefreshCw, Save, Upload, ExternalLink } from 'lucide-react';
+import { Settings, ShieldAlert, ArrowLeft, Loader2, RefreshCw, Save, Upload, ExternalLink, UserPlus, Trash2, Pencil, X, Check } from 'lucide-react';
 
 const LANGUAGE_OPTIONS = [
   { code: 'es', label: 'Español (neutro)' },
@@ -15,6 +15,217 @@ const AUTH_MODE_OPTIONS = [
   { code: 'google', label: 'Google OAuth' },
   { code: 'both', label: 'Local + Google OAuth' },
 ];
+
+const ROLE_LABELS = {
+  admin:       { label: 'Admin',       color: 'bg-purple-100 text-purple-800 border-purple-200' },
+  verificador: { label: 'Verificador', color: 'bg-blue-100 text-blue-800 border-blue-200' },
+  rubricador:  { label: 'Rubricador',  color: 'bg-green-100 text-green-800 border-green-200' },
+};
+
+const ROLE_DESCRIPTIONS = {
+  admin:       'Acceso total: configuración, skills, usuarios y todas las funciones.',
+  verificador: 'Puede usar todos los skills y evaluar/verificar documentos.',
+  rubricador:  'Puede generar rúbricas, usar el repositorio y el asistente de redacción. Sin acceso a evaluación.',
+};
+
+function RoleBadge({ role }) {
+  const r = ROLE_LABELS[role] || { label: role, color: 'bg-gray-100 text-gray-700 border-gray-200' };
+  return (
+    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${r.color}`}>
+      {r.label}
+    </span>
+  );
+}
+
+function UserManagement({ authHeaders, currentUserEmail }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(null);
+  const [editData, setEditData] = useState({});
+  const [newUser, setNewUser] = useState({ email: '', name: '', password: '', role: 'rubricador' });
+  const [saving, setSaving] = useState(false);
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/users', { headers: authHeaders });
+      if (!res.ok) throw new Error('No se pudo obtener la lista de usuarios.');
+      setUsers(await res.json());
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchUsers(); }, []);
+
+  const handleCreate = async () => {
+    if (!newUser.email || !newUser.password || !newUser.name) {
+      setError('Email, nombre y contraseña son requeridos.'); return;
+    }
+    setSaving(true); setError(null); setSuccess(null);
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Error al crear usuario.'); }
+      setSuccess(`Usuario ${newUser.email} creado.`);
+      setNewUser({ email: '', name: '', password: '', role: 'rubricador' });
+      setShowCreate(false);
+      fetchUsers();
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleUpdate = async (email) => {
+    setSaving(true); setError(null); setSuccess(null);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(email)}`, {
+        method: 'PUT',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(editData),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Error al actualizar.'); }
+      setSuccess(`Usuario ${email} actualizado.`);
+      setEditingEmail(null);
+      fetchUsers();
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (email) => {
+    if (!confirm(`¿Eliminar al usuario ${email}?`)) return;
+    setError(null); setSuccess(null);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(email)}`, {
+        method: 'DELETE', headers: authHeaders,
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Error al eliminar.'); }
+      setSuccess(`Usuario ${email} eliminado.`);
+      fetchUsers();
+    } catch (e) { setError(e.message); }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+      <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-4">
+        <div>
+          <h2 className="text-lg font-bold text-gray-800">Gestión de Usuarios</h2>
+          <p className="text-sm text-gray-500">Creá, editá o eliminá usuarios y asigná roles.</p>
+        </div>
+        <button
+          onClick={() => { setShowCreate(!showCreate); setError(null); }}
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition"
+        >
+          <UserPlus className="w-4 h-4" /> Nuevo usuario
+        </button>
+      </div>
+
+      {error && <p className="text-red-600 text-sm mb-3 bg-red-50 p-3 rounded-xl border border-red-100">{error}</p>}
+      {success && <p className="text-green-700 text-sm mb-3 bg-green-50 p-3 rounded-xl border border-green-100">{success}</p>}
+
+      {/* Descripción de roles */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+        {Object.entries(ROLE_DESCRIPTIONS).map(([role, desc]) => (
+          <div key={role} className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+            <RoleBadge role={role} />
+            <p className="text-xs text-slate-500 mt-1.5">{desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Formulario nuevo usuario */}
+      {showCreate && (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <input placeholder="Email" className="border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+            value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} />
+          <input placeholder="Nombre" className="border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+            value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} />
+          <input placeholder="Contraseña" type="password" className="border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+            value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
+          <select className="border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+            value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
+            <option value="rubricador">Rubricador</option>
+            <option value="verificador">Verificador</option>
+            <option value="admin">Admin</option>
+          </select>
+          <div className="md:col-span-2 flex gap-2">
+            <button onClick={handleCreate} disabled={saving}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-semibold px-4 py-2 rounded-xl transition">
+              <Check className="w-4 h-4" /> {saving ? 'Creando...' : 'Crear usuario'}
+            </button>
+            <button onClick={() => setShowCreate(false)}
+              className="flex items-center gap-1.5 text-gray-600 hover:bg-gray-100 text-sm px-4 py-2 rounded-xl transition">
+              <X className="w-4 h-4" /> Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Lista de usuarios */}
+      {loading ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-blue-400" /></div>
+      ) : (
+        <div className="space-y-2">
+          {users.map(u => (
+            <div key={u.email} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:bg-slate-50 transition">
+              {editingEmail === u.email ? (
+                <>
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input placeholder="Nombre" className="border rounded-lg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+                      defaultValue={u.name} onChange={e => setEditData({ ...editData, name: e.target.value })} />
+                    <select className="border rounded-lg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+                      defaultValue={u.role} onChange={e => setEditData({ ...editData, role: e.target.value })}>
+                      <option value="rubricador">Rubricador</option>
+                      <option value="verificador">Verificador</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <input placeholder="Nueva contraseña (opcional)" type="password"
+                      className="border rounded-lg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+                      onChange={e => setEditData({ ...editData, password: e.target.value || undefined })} />
+                  </div>
+                  <button onClick={() => handleUpdate(u.email)} disabled={saving}
+                    className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition" title="Guardar">
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => setEditingEmail(null)}
+                    className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition" title="Cancelar">
+                    <X className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-800 truncate">{u.name}</span>
+                      <RoleBadge role={u.role} />
+                      {!u.is_active && <span className="text-[10px] bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full font-bold">Inactivo</span>}
+                      {u.email === currentUserEmail && <span className="text-[10px] text-gray-400">(vos)</span>}
+                    </div>
+                    <span className="text-xs text-gray-400">{u.email}</span>
+                  </div>
+                  <button onClick={() => { setEditingEmail(u.email); setEditData({}); }}
+                    className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition" title="Editar">
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  {u.email !== currentUserEmail && (
+                    <button onClick={() => handleDelete(u.email)}
+                      className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition" title="Eliminar">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage({ onClose }) {
   const { t } = useLanguage();
@@ -141,7 +352,11 @@ export default function SettingsPage({ onClose }) {
             <div className="bg-green-50 text-green-700 p-4 rounded-xl text-sm border border-green-200">{success}</div>
           )}
 
-          {/* Editable Settings */}
+          {/* User Management */}
+          {config && (
+            <UserManagement authHeaders={authHeaders} currentUserEmail={user?.email} />
+          )}
+
           {config && editableKeys.length > 0 && (
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
               <div className="flex items-center justify-between mb-6 border-b border-gray-100 pb-4">

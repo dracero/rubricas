@@ -65,7 +65,7 @@ from app.docx_converter import md_to_docx, extract_text_from_docx, detect_rubric
 from app.i18n import get_request_language, get_message, LANGUAGE_NAMES
 from app.auth.router import router as auth_router
 from app.auth.middleware import auth_middleware
-from app.auth.service import get_current_user
+from app.auth.service import get_current_user, require_admin, require_verificador
 
 
 logging.basicConfig(level=logging.INFO)
@@ -108,6 +108,11 @@ async def lifespan(app_instance: FastAPI):
 
     # Setup LangSmith tracing
     setup_langsmith()
+
+    # Initialize MongoDB
+    from app.auth.db import init_db
+    await init_db()
+    logger.info("✅ MongoDB connection initialized")
 
     # Create the root agent with skills
     root_agent = create_root_agent()
@@ -1294,7 +1299,7 @@ async def delete_rubric(rubric_id: str):
 # ============================================================================
 
 @app.post("/api/evaluate/upload_rubric")
-async def upload_rubric(request: Request, file: UploadFile = File(...)):
+async def upload_rubric(request: Request, file: UploadFile = File(...), _=Depends(require_verificador)):
     """Upload a rubric file for evaluation."""
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
@@ -1310,7 +1315,7 @@ async def upload_rubric(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/api/evaluate/upload_doc")
-async def upload_doc(request: Request, file: UploadFile = File(...)):
+async def upload_doc(request: Request, file: UploadFile = File(...), _=Depends(require_verificador)):
     """Upload a document for evaluation."""
     file_id = str(uuid.uuid4())
     ext = Path(file.filename).suffix.lower()
@@ -1326,7 +1331,7 @@ async def upload_doc(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/api/evaluate/run")
-async def run_evaluation(eval_request: EvaluateRequest, request: Request):
+async def run_evaluation(eval_request: EvaluateRequest, request: Request, _=Depends(require_verificador)):
     """Run evaluation: compare a document against a rubric."""
     lang = get_request_language(request)
     language_name = LANGUAGE_NAMES.get(lang, 'español')
@@ -1554,7 +1559,7 @@ class AutoCorrectRequest(BaseModel):
 
 
 @app.post("/api/evaluate/autocorrect")
-async def autocorrect_document(req: AutoCorrectRequest, request: Request):
+async def autocorrect_document(req: AutoCorrectRequest, request: Request, _=Depends(require_verificador)):
     """Auto-correct a document to comply with a rubric based on evaluation results."""
     lang = get_request_language(request)
     language_name = LANGUAGE_NAMES.get(lang, 'español')
@@ -1757,7 +1762,7 @@ async def list_skills():
 
 
 @app.post("/api/skills/upload")
-async def upload_skill(file: UploadFile = File(...)):
+async def upload_skill(file: UploadFile = File(...), _=Depends(require_admin)):
     """Upload a new skill .md file and structure it as an ADK Skill directory."""
     if not file.filename.lower().endswith(".md"):
         raise HTTPException(status_code=400, detail="Solo se aceptan archivos .md")
@@ -1815,7 +1820,7 @@ async def upload_skill(file: UploadFile = File(...)):
 
 
 @app.delete("/api/skills/{skill_name}")
-async def delete_skill(skill_name: str):
+async def delete_skill(skill_name: str, _=Depends(require_admin)):
     """Delete an entire skill directory."""
     skill_dir = SKILLS_DIR / skill_name
     if not skill_dir.exists() or not skill_dir.is_dir():
@@ -1858,14 +1863,93 @@ app.mount("/uploads", StaticFiles(directory=str(BRAND_DIR.parent)), name="upload
 
 
 # ============================================================================
-# System status & setup (public — no auth required)
+# User management (admin only)
 # ============================================================================
 from app.auth.db import (
     has_any_admin, get_all_settings, upsert_settings, upsert_setting,
     create_local_user, get_setting,
+    list_users, update_user, delete_user,
 )
 from passlib.context import CryptContext
 _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+VALID_ROLES = {"admin", "verificador", "rubricador"}
+
+
+@app.get("/api/users")
+async def list_users_endpoint(current_user: dict = Depends(require_admin)):
+    """List all users. Admin only."""
+    return await list_users()
+
+
+class CreateUserRequest(BaseModel):
+    email: str
+    name: str
+    password: str
+    role: str = "rubricador"
+
+
+@app.post("/api/users")
+async def create_user(body: CreateUserRequest, current_user: dict = Depends(require_admin)):
+    """Create a new local user. Admin only."""
+    if body.role not in VALID_ROLES:
+        raise HTTPException(status_code=422, detail=f"Rol inválido. Válidos: {', '.join(VALID_ROLES)}")
+    hashed = _pwd_ctx.hash(body.password)
+    try:
+        user = await create_local_user(body.email, body.name, hashed, role=body.role)
+    except Exception:
+        raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email.")
+    return {"email": user["email"], "name": user["name"], "role": user["role"]}
+
+
+class UpdateUserRequest(BaseModel):
+    name: str = None
+    role: str = None
+    password: str = None
+    is_active: bool = None
+
+
+@app.put("/api/users/{email}")
+async def update_user_endpoint(email: str, body: UpdateUserRequest, current_user: dict = Depends(require_admin)):
+    """Update name, role, password or active status of a user. Admin only."""
+    if body.role and body.role not in VALID_ROLES:
+        raise HTTPException(status_code=422, detail=f"Rol inválido. Válidos: {', '.join(VALID_ROLES)}")
+    if email == current_user["email"] and body.role and body.role != "admin":
+        raise HTTPException(status_code=400, detail="No podés cambiar tu propio rol de admin.")
+
+    updates = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.role is not None:
+        updates["role"] = body.role
+    if body.is_active is not None:
+        updates["is_active"] = body.is_active
+    if body.password:
+        updates["hashed_password"] = _pwd_ctx.hash(body.password)
+
+    if not updates:
+        raise HTTPException(status_code=422, detail="Nada que actualizar.")
+
+    row = await update_user(email, updates)
+    if not row:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    return row
+
+
+@app.delete("/api/users/{email}")
+async def delete_user_endpoint(email: str, current_user: dict = Depends(require_admin)):
+    """Delete a user. Admin only. Cannot delete yourself."""
+    if email == current_user["email"]:
+        raise HTTPException(status_code=400, detail="No podés eliminar tu propia cuenta.")
+    deleted = await delete_user(email)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    return {"status": "deleted", "email": email}
+
+
+# ============================================================================
+# System status & setup (public — no auth required)
+# ============================================================================
 
 
 @app.get("/api/system/status")
@@ -1907,15 +1991,12 @@ async def system_setup(
         await create_local_user(admin_email, admin_name or admin_email, hashed, role="admin")
     except Exception:
         # User already exists — update password and promote to admin
-        from sqlalchemy import update as sa_update
-        from app.auth.db import users as users_table, get_session
-        async with await get_session() as session:
-            async with session.begin():
-                await session.execute(
-                    sa_update(users_table).where(users_table.c.email == admin_email).values(
-                        hashed_password=hashed, role="admin", name=admin_name or admin_email
-                    )
-                )
+        from app.auth.db import update_user as _update_user
+        await _update_user(admin_email, {
+            "hashed_password": hashed,
+            "role": "admin",
+            "name": admin_name or admin_email,
+        })
 
     # Save settings to DB
     await upsert_settings({
@@ -1953,10 +2034,8 @@ HIDDEN_KEYS = [
 
 
 @app.get("/api/config")
-async def get_config(current_user: dict = Depends(get_current_user)):
+async def get_config(current_user: dict = Depends(require_admin)):
     """Fetch system configuration. Only accessible by admins."""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="No tienes permisos de administrador")
 
     db_settings = await get_all_settings()
 
@@ -1981,11 +2060,9 @@ async def get_config(current_user: dict = Depends(get_current_user)):
 @app.put("/api/config/settings")
 async def update_settings_json(
     body: dict,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """Update editable settings (JSON). Only admin."""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="No tienes permisos de administrador")
 
     updates = {k: v for k, v in body.items() if k in EDITABLE_KEYS and isinstance(v, str)}
     if updates:
@@ -1997,11 +2074,9 @@ async def update_settings_json(
 async def upload_brand(
     logo: UploadFile = File(None),
     background: UploadFile = File(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """Upload brand files (logo, background). Only admin."""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="No tienes permisos de administrador")
 
     updated = []
     for file_obj, filename in [(logo, "logo.png"), (background, "background.png")]:

@@ -130,7 +130,7 @@ function AppShell() {
                 <h1 className="text-xl font-bold text-gray-800">AsistIAG Orchestrator</h1>
               </div>
               <div className="flex items-center gap-4">
-                <SkillManager />
+                {user?.role === 'admin' && <SkillManager />}
               </div>
             </header>
 
