@@ -1,5 +1,42 @@
 export const translations = {
   es: {
+    // General
+    'loading': 'Cargando...',
+    'logout': 'Cerrar sesión',
+
+    // Login
+    'login_title': 'AsistIAG',
+    'login_subtitle': 'Iniciá sesión para continuar',
+    'continue_google': 'Continuar con Google',
+    'continue_microsoft': 'Continuar con Microsoft',
+    'continue_uchile': 'Continuar con UChile',
+    'or_local': 'o con cuenta local',
+    'email': 'Correo electrónico',
+    'password': 'Contraseña',
+    'auth_error': 'Error de autenticación',
+    'network_error': 'Error de red',
+    'entering': 'Entrando...',
+    'login_button': 'Iniciar sesión',
+
+    // Post-login landing
+    'login_success': 'Sesión iniciada',
+    'welcome': 'Bienvenido a AsistIAG',
+    'logged_in_as': 'Ingresaste como',
+    'landing_desc': 'Desde aquí podés generar rúbricas, evaluarlas y gestionar tus skills.',
+    'feature_1_title': 'Generación de rúbricas',
+    'feature_1_desc': 'Construye rúbricas desde documentos y base normativa.',
+    'feature_2_title': 'Evaluación de cumplimiento',
+    'feature_2_desc': 'Compara documentos contra criterios de forma trazable.',
+    'feature_3_title': 'Skills personalizadas',
+    'feature_3_desc': 'Extendé el comportamiento del sistema según tu flujo.',
+    'continue_dashboard': 'Continuar al panel',
+
+    // Language names
+    'lang_es': 'Español',
+    'lang_gl': 'Gallego',
+    'lang_pt': 'Portugués (BR)',
+    'lang_en': 'Inglés',
+
     // App header
     'header.title': 'AsistIAG Orchestrator',
 
@@ -137,6 +174,43 @@ export const translations = {
   },
 
   gl: {
+    // General
+    'loading': 'Cargando...',
+    'logout': 'Pechar sesión',
+
+    // Login
+    'login_title': 'AsistIAG',
+    'login_subtitle': 'Inicia sesión para continuar',
+    'continue_google': 'Continuar con Google',
+    'continue_microsoft': 'Continuar con Microsoft',
+    'continue_uchile': 'Continuar con UChile',
+    'or_local': 'ou con conta local',
+    'email': 'Correo electrónico',
+    'password': 'Contrasinal',
+    'auth_error': 'Erro de autenticación',
+    'network_error': 'Erro de rede',
+    'entering': 'Entrando...',
+    'login_button': 'Iniciar sesión',
+
+    // Post-login landing
+    'login_success': 'Sesión iniciada',
+    'welcome': 'Benvido a AsistIAG',
+    'logged_in_as': 'Ingresaches como',
+    'landing_desc': 'Desde aquí podes xerar rúbricas, avalialas e xestionar as túas skills.',
+    'feature_1_title': 'Xeración de rúbricas',
+    'feature_1_desc': 'Constrúe rúbricas desde documentos e base normativa.',
+    'feature_2_title': 'Avaliación de cumprimento',
+    'feature_2_desc': 'Compara documentos contra criterios de forma trazable.',
+    'feature_3_title': 'Skills personalizadas',
+    'feature_3_desc': 'Estende o comportamento do sistema segundo o teu fluxo.',
+    'continue_dashboard': 'Continuar ao panel',
+
+    // Language names
+    'lang_es': 'Español',
+    'lang_gl': 'Galego',
+    'lang_pt': 'Portugués (BR)',
+    'lang_en': 'Inglés',
+
     // App header
     'header.title': 'AsistIAG Orchestrator',
 
@@ -274,6 +348,43 @@ export const translations = {
   },
 
   en: {
+    // General
+    'loading': 'Loading...',
+    'logout': 'Log out',
+
+    // Login
+    'login_title': 'AsistIAG',
+    'login_subtitle': 'Sign in to continue',
+    'continue_google': 'Continue with Google',
+    'continue_microsoft': 'Continue with Microsoft',
+    'continue_uchile': 'Continue with UChile',
+    'or_local': 'or with local account',
+    'email': 'Email address',
+    'password': 'Password',
+    'auth_error': 'Authentication error',
+    'network_error': 'Network error',
+    'entering': 'Signing in...',
+    'login_button': 'Sign in',
+
+    // Post-login landing
+    'login_success': 'Logged in',
+    'welcome': 'Welcome to AsistIAG',
+    'logged_in_as': 'You are logged in as',
+    'landing_desc': 'From here you can generate rubrics, evaluate them and manage your skills.',
+    'feature_1_title': 'Rubric generation',
+    'feature_1_desc': 'Build rubrics from documents and normative base.',
+    'feature_2_title': 'Compliance evaluation',
+    'feature_2_desc': 'Compare documents against criteria in a traceable way.',
+    'feature_3_title': 'Custom skills',
+    'feature_3_desc': 'Extend the system behavior according to your flow.',
+    'continue_dashboard': 'Continue to dashboard',
+
+    // Language names
+    'lang_es': 'Spanish',
+    'lang_gl': 'Galician',
+    'lang_pt': 'Portuguese (BR)',
+    'lang_en': 'English',
+
     // App header
     'header.title': 'AsistIAG Orchestrator',
 
@@ -411,6 +522,43 @@ export const translations = {
   },
 
   pt: {
+    // General
+    'loading': 'Carregando...',
+    'logout': 'Sair',
+
+    // Login
+    'login_title': 'AsistIAG',
+    'login_subtitle': 'Faça login para continuar',
+    'continue_google': 'Continuar com o Google',
+    'continue_microsoft': 'Continuar com a Microsoft',
+    'continue_uchile': 'Continuar com UChile',
+    'or_local': 'ou com conta local',
+    'email': 'E-mail',
+    'password': 'Senha',
+    'auth_error': 'Erro de autenticação',
+    'network_error': 'Erro de rede',
+    'entering': 'Entrando...',
+    'login_button': 'Entrar',
+
+    // Post-login landing
+    'login_success': 'Login efetuado',
+    'welcome': 'Bem-vindo ao AsistIAG',
+    'logged_in_as': 'Você entrou como',
+    'landing_desc': 'A partir daqui você pode gerar rúbricas, avaliá-las e gerenciar suas skills.',
+    'feature_1_title': 'Geração de rúbricas',
+    'feature_1_desc': 'Construa rúbricas a partir de documentos e base normativa.',
+    'feature_2_title': 'Avaliação de conformidade',
+    'feature_2_desc': 'Compare documentos com critérios de forma rastreável.',
+    'feature_3_title': 'Skills personalizadas',
+    'feature_3_desc': 'Estenda o comportamento do sistema de acordo com seu fluxo.',
+    'continue_dashboard': 'Continuar para o painel',
+
+    // Language names
+    'lang_es': 'Espanhol',
+    'lang_gl': 'Galego',
+    'lang_pt': 'Português (BR)',
+    'lang_en': 'Inglês',
+
     // App header
     'header.title': 'AsistIAG Orchestrator',
 
