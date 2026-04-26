@@ -384,24 +384,64 @@ async def get_config_public():
 # API Endpoints - Chat
 # ============================================================================
 
-# Module-level variable to persist chat session across messages
-_current_chat_session_id: Optional[str] = None
+# Per-user chat sessions: email → session_id
+# Each authenticated user gets their own ADK conversation context.
+_user_chat_sessions: dict[str, str] = {}
+
+
+def _get_user_session_id(request: Request) -> str:
+    """Derive a stable session ID from the Bearer JWT without full DB lookup.
+
+    Falls back to a random UUID for unauthenticated requests (shouldn't
+    happen in practice since the middleware protects /api/chat).
+    """
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        try:
+            from jose import jwt as _jwt
+            import os as _os
+            payload = _jwt.decode(
+                token,
+                _os.getenv("SECRET_KEY", "change-me-in-production"),
+                algorithms=["HS256"],
+            )
+            email: str = payload.get("sub", "")
+            if email:
+                if email not in _user_chat_sessions:
+                    _user_chat_sessions[email] = str(uuid.uuid4())
+                return _user_chat_sessions[email]
+        except Exception:
+            pass
+    # Fallback: anonymous single-use session
+    return str(uuid.uuid4())
 
 
 @app.post("/api/chat/reset")
-async def reset_chat():
-    """Reset the chat session (e.g. when language changes)."""
-    global _current_chat_session_id
-    _current_chat_session_id = None
-    logger.info("🔄 Chat session reset")
+async def reset_chat(request: Request):
+    """Reset the chat session for the current user."""
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        try:
+            from jose import jwt as _jwt
+            payload = _jwt.decode(
+                token,
+                os.getenv("SECRET_KEY", "change-me-in-production"),
+                algorithms=["HS256"],
+            )
+            email: str = payload.get("sub", "")
+            if email and email in _user_chat_sessions:
+                del _user_chat_sessions[email]
+                logger.info("🔄 Chat session reset for user: %s", email)
+        except Exception:
+            pass
     return {"status": "ok"}
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(chat_request: ChatRequest, request: Request):
     """Main chat endpoint — routes through the root agent."""
-    global _current_chat_session_id
-
     lang = get_request_language(request)
     user_message = chat_request.message.strip()
     if not user_message:
@@ -409,12 +449,11 @@ async def chat(chat_request: ChatRequest, request: Request):
 
     logger.info(f"📩 Chat received: {user_message[:80]}...")
 
-    # Persist session across chat messages for conversation continuity
-    if _current_chat_session_id is None:
-        _current_chat_session_id = str(uuid.uuid4())
+    # Each user gets their own persistent session — no cross-user contamination
+    session_id = _get_user_session_id(request)
 
     try:
-        response_text = await run_agent(user_message, session_id=_current_chat_session_id, lang=lang)
+        response_text = await run_agent(user_message, session_id=session_id, lang=lang)
     except Exception as e:
         logger.error(f"❌ Agent error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
