@@ -136,6 +136,9 @@ Un criterio sin respaldo textual en el documento es una ALUCINACIÓN y está PRO
 
 ### Estructura obligatoria de la rúbrica — SOLO ESTAS 2 SECCIONES, NADA MÁS
 
+**⚠️ CHECKPOINT OBLIGATORIO antes de escribir la tabla:**
+Tu respuesta DEBE comenzar con el bloque de Información General. Si no lo escribís primero, la rúbrica es inválida.
+
 1. INFORMACIÓN GENERAL — un bloque breve con viñetas (•), SIN encabezados ni subtítulos:
    • Institución: (nombre de la institución para la cual se genera la rúbrica, si se conoce)
    • Ámbito de Aplicación: (qué tipo de documento/propuesta evalúa esta rúbrica)
@@ -143,19 +146,31 @@ Un criterio sin respaldo textual en el documento es una ALUCINACIÓN y está PRO
    • Nivel de Criticidad: (Alto/Medio/Bajo)
    • Objetivos de la evaluación: (una frase concisa)
 
+   Ejemplo correcto:
+   • Institución: Universidad Nacional
+   • Ámbito de Aplicación: Trabajos académicos de grado y posgrado
+   • Normativa de Referencia: Reglamento Académico 2024
+   • Nivel de Criticidad: Medio
+   • Objetivos de la evaluación: Verificar cumplimiento de requisitos formales y de contenido
+
 2. MATRIZ DE EVALUACIÓN — INMEDIATAMENTE después de la información general.
    ESTRICTAMENTE EN FORMATO DE TABLA MARKDOWN.
-   Las columnas de la tabla DEBEN ser: Área de Cumplimiento | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio
-   La columna "Nivel mínimo aprobatorio" debe incluir SIEMPRE un ejemplo concreto entre paréntesis que ilustre el cumplimiento.
+   Las columnas de la tabla DEBEN ser EXACTAMENTE: Área de Cumplimiento | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio
+
+   **REGLA DE EJEMPLOS — CRÍTICA:**
+   La columna "Nivel mínimo aprobatorio" DEBE tener un ejemplo entre paréntesis en CADA FILA sin excepción.
+   ❌ MAL:  | Presentar informe mensual firmado por el supervisor |
+   ✅ BIEN: | Informe mensual firmado presentado antes del día 5 de cada mes (ej: informe de marzo firmado por Lic. García entregado el 04/04) |
 
 NO incluyas NINGUNA otra sección (ni Áreas de Cumplimiento como sección separada, ni Recomendaciones, ni Cobertura del documento, ni Conclusiones).
 La salida debe ser ÚNICAMENTE: Información General (viñetas) + Tabla Markdown.
 
 ### Reglas Críticas
 
+- INFORMACIÓN GENERAL PRIMERO: La primera cosa que escribís es SIEMPRE el bloque de viñetas de Información General (•). Sin este bloque, la rúbrica es inválida. No saltees este paso aunque el documento no especifique la institución — ponés "No especificada" si es necesario.
+- EJEMPLOS EN CADA FILA: CADA fila de la tabla DEBE terminar con un ejemplo concreto entre paréntesis en la columna "Nivel mínimo aprobatorio". No hay excepciones. Si una fila no tiene ejemplo, esa fila está incompleta.
 - IGUALDAD DE GÉNERO: Evita términos sexistas o que denoten discriminación de género en toda la rúbrica. Usa un lenguaje respetuoso con la igualdad de género.
 - ANTI-ALUCINACIÓN: Cada criterio DEBE poder rastrearse a una frase específica del documento. Si no podés citar la fuente, NO incluyas el criterio. Nunca completes con criterios genéricos.
-- EJEMPLOS: La columna "Nivel mínimo aprobatorio" SIEMPRE debe incluir un ejemplo concreto entre paréntesis que ilustre el cumplimiento.
 - NO uses términos vagos como "efectivo" o "adecuado" sin definirlos operacionalmente.
 - Cada criterio debe tener EVIDENCIAS OBSERVABLES concretas y verificables.
 - Incluye REQUISITOS MÍNIMOS concretos para aprobar cada criterio.

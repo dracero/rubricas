@@ -1,0 +1,36 @@
+{
+  "generate.predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Genera una rúbrica de cumplimiento normativo a partir de un documento.\n\nLa rúbrica DEBE tener exactamente 2 secciones:\n1. INFORMACIÓN GENERAL — bloque con viñetas (Institución, Ámbito, Normativa,\n   Nivel de Criticidad, Objetivos).\n2. MATRIZ DE EVALUACIÓN — tabla Markdown con columnas:\n   | Área de Cumplimiento | Criterio de evaluación | Evidencias observables | Nivel mínimo aprobatorio |\n   La columna \"Nivel mínimo aprobatorio\" SIEMPRE debe incluir un ejemplo concreto entre paréntesis.\n\nNO incluir ninguna otra sección (sin Recomendaciones, sin Conclusiones).\nSOLO extraer criterios que estén EXPLÍCITAMENTE en el documento (anti-alucinación).",
+      "fields": [
+        {
+          "prefix": "Documento Texto:",
+          "description": "Texto completo del documento normativo del cual se extrae la rúbrica"
+        },
+        {
+          "prefix": "Ontologia Resumen:",
+          "description": "Resumen de entidades y relaciones extraídas del documento (puede estar vacío)"
+        },
+        {
+          "prefix": "Reasoning:",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Rubrica:",
+          "description": "Rúbrica completa en formato Markdown. Empieza con viñetas de Información General, luego la tabla de evaluación. Sin secciones adicionales."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.2.0",
+      "cloudpickle": "3.1"
+    }
+  }
+}
