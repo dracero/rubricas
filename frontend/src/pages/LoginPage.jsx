@@ -25,7 +25,6 @@ const MicrosoftIcon = () => (
 const PROVIDER_LABELS = {
   GOOGLE: { label: 'continue_google', Icon: GoogleIcon, href: '/auth/login/google' },
   MICROSOFT: { label: 'continue_microsoft', Icon: MicrosoftIcon, href: '/auth/login/microsoft' },
-  OAUTH2: { label: 'continue_uchile', Icon: () => <span>🎓</span>, href: '/auth/login/uchile' },
   LOCAL: { label: null },  // rendered separately as a form
 };
 

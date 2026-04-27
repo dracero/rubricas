@@ -8,9 +8,11 @@ import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import MarkdownTable from './MarkdownTable';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const ChatInterface = () => {
     const { lang, t } = useLanguage();
+    const { user } = useAuth();
     const [messages, setMessages] = useState([
         {
             source: 'orchestrator',
@@ -22,6 +24,22 @@ const ChatInterface = () => {
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef(null);
+
+    // Permission check: rubricador can only use generator, verificador and admin can use all
+    const canUseComponent = (componentType) => {
+        if (!user) return false;
+        const role = user.role;
+        
+        // Admin and verificador can use everything
+        if (role === 'admin' || role === 'verificador') return true;
+        
+        // Rubricador can only use generator, repository, and writing assistant
+        if (role === 'rubricador') {
+            return ['RubricGenerator', 'RubricRepository', 'WritingAssistant'].includes(componentType);
+        }
+        
+        return false;
+    };
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -105,12 +123,20 @@ const ChatInterface = () => {
         else if (action.includes(t('chat.quick.repository')) || action.includes('Repositorio')) component = 'RubricRepository';
         else if (action.includes('Evaluar')) component = 'RubricEvaluator';
 
-        if (component) {
+        if (component && canUseComponent(component)) {
             setMessages(prev => [...prev, {
                 source: 'orchestrator',
                 type: 'action_request',
                 content: '',
                 metadata: { component, architecture: 'skills' },
+                timestamp: new Date()
+            }]);
+        } else if (component && !canUseComponent(component)) {
+            // Show permission error
+            setMessages(prev => [...prev, {
+                source: 'orchestrator',
+                type: 'error',
+                content: t('chat.error.permission') || 'No tenés permisos para acceder a esta funcionalidad.',
                 timestamp: new Date()
             }]);
         }
@@ -169,24 +195,41 @@ const ChatInterface = () => {
                 <div className="space-y-3">
                     <p>{t('chat.welcome')}</p>
                     <div className="flex flex-wrap gap-2">
-                        <button
-                            onClick={() => handleQuickAction(t('chat.quick.generate'))}
-                            className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-full hover:bg-blue-700 transition"
-                        >
-                            📝 {t('chat.quick.generate')}
-                        </button>
-                        <button
-                            onClick={() => handleQuickAction(t('chat.quick.repository'))}
-                            className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-full hover:bg-amber-600 transition"
-                        >
-                            📁 {t('chat.quick.repository')}
-                        </button>
+                        {canUseComponent('RubricGenerator') && (
+                            <button
+                                onClick={() => handleQuickAction(t('chat.quick.generate'))}
+                                className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-full hover:bg-blue-700 transition"
+                            >
+                                📝 {t('chat.quick.generate')}
+                            </button>
+                        )}
+                        {canUseComponent('RubricRepository') && (
+                            <button
+                                onClick={() => handleQuickAction(t('chat.quick.repository'))}
+                                className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-full hover:bg-amber-600 transition"
+                            >
+                                📁 {t('chat.quick.repository')}
+                            </button>
+                        )}
                     </div>
                 </div>
             );
         }
         if (msg.type === 'action_request') {
             const componentType = msg.metadata?.component;
+            
+            // Check if user has permission to use this component
+            if (!canUseComponent(componentType)) {
+                return (
+                    <div className="text-amber-600 flex items-center gap-2 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                        <AlertCircle className="w-4 h-4" />
+                        <p className="text-sm">
+                            {t('chat.error.permission') || 'No tenés permisos para acceder a esta funcionalidad.'}
+                        </p>
+                    </div>
+                );
+            }
+            
             return (
                 <div className="space-y-4">
                     {msg.content && <MarkdownTable content={msg.content} />}
