@@ -67,6 +67,10 @@ async def login_local(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
     if not verify_password(body.password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    if user.get("role") == "pending":
+        raise HTTPException(status_code=403, detail="pending_approval")
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Cuenta desactivada")
     token = create_access_token(user["email"])
     return TokenResponse(access_token=token, user=UserOut(**user))
 
@@ -96,7 +100,17 @@ async def callback_oauth(provider: str, request: Request):
     name = user_info.get("name") or user_info.get("preferred_username") or email
     if not email:
         raise HTTPException(status_code=400, detail="Provider did not return email")
+
     db_user = await upsert_oauth_user(email=email, name=name, provider=provider)
+
+    # If the user is pending approval, redirect with an error instead of a token
+    if db_user.get("role") == "pending":
+        return RedirectResponse(url=f"{FRONTEND_URL}/?auth_error=pending_approval")
+
+    # If account was deactivated by admin
+    if not db_user.get("is_active", True):
+        return RedirectResponse(url=f"{FRONTEND_URL}/?auth_error=account_disabled")
+
     jwt_token = create_access_token(db_user["email"])
     return RedirectResponse(url=f"{FRONTEND_URL}/?token={jwt_token}")
 

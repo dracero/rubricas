@@ -20,12 +20,14 @@ const ROLE_LABELS = {
   admin:       { label: 'Admin',       color: 'bg-purple-100 text-purple-800 border-purple-200' },
   verificador: { label: 'Verificador', color: 'bg-blue-100 text-blue-800 border-blue-200' },
   rubricador:  { label: 'Rubricador',  color: 'bg-green-100 text-green-800 border-green-200' },
+  pending:     { label: 'Pendiente',   color: 'bg-amber-100 text-amber-800 border-amber-200' },
 };
 
 const ROLE_DESCRIPTIONS = {
   admin:       'Acceso total: configuración, skills, usuarios y todas las funciones.',
   verificador: 'Puede usar todos los skills y evaluar/verificar documentos.',
   rubricador:  'Puede generar rúbricas, usar el repositorio y el asistente de redacción. Sin acceso a evaluación.',
+  pending:     'Sin acceso. El admin debe asignar un rol para que el usuario pueda ingresar.',
 };
 
 function RoleBadge({ role }) {
@@ -148,6 +150,7 @@ function UserManagement({ authHeaders, currentUserEmail }) {
             value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
           <select className="border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 bg-white"
             value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
+            <option value="pending">Pendiente (sin acceso)</option>
             <option value="rubricador">Rubricador</option>
             <option value="verificador">Verificador</option>
             <option value="admin">Admin</option>
@@ -179,6 +182,7 @@ function UserManagement({ authHeaders, currentUserEmail }) {
                       defaultValue={u.name} onChange={e => setEditData({ ...editData, name: e.target.value })} />
                     <select className="border rounded-lg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-300 bg-white"
                       defaultValue={u.role} onChange={e => setEditData({ ...editData, role: e.target.value })}>
+                      <option value="pending">Pendiente (sin acceso)</option>
                       <option value="rubricador">Rubricador</option>
                       <option value="verificador">Verificador</option>
                       <option value="admin">Admin</option>

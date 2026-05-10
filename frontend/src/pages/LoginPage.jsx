@@ -29,9 +29,9 @@ const PROVIDER_LABELS = {
 };
 
 export default function LoginPage() {
-  const { loginWithToken } = useAuth();
+  const { loginWithToken, authError, setAuthError } = useAuth();
   const { t } = useLanguage();
-  const [mode, setMode] = useState(null);   // null = loading
+  const [mode, setMode] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -59,7 +59,11 @@ export default function LoginPage() {
       });
       if (!res.ok) {
         const d = await res.json();
-        setError(t('auth_error'));
+        if (d.detail === 'pending_approval') {
+          setError(t('error.pending_approval'));
+        } else {
+          setError(t('auth_error'));
+        }
         return;
       }
       const { access_token } = await res.json();
@@ -79,6 +83,11 @@ export default function LoginPage() {
     );
   }
 
+  // Resolve auth_error from OAuth redirect into a human-readable message
+  const oauthErrorMsg = authError
+    ? t(`error.${authError}`)
+    : null;
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-transparent p-4">
       <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm space-y-6">
@@ -86,6 +95,22 @@ export default function LoginPage() {
           <img src={logoApp} alt="Logo Aplicación" className="h-14 w-auto object-contain mx-auto drop-shadow-sm mb-2" />
           <p className="text-sm text-gray-500 mt-1">{t('login_subtitle')}</p>
         </div>
+
+        {/* OAuth error banner (pending approval, disabled account) */}
+        {oauthErrorMsg && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+            <span className="text-amber-500 text-lg leading-none">⚠</span>
+            <div>
+              <p className="text-sm text-amber-800 font-medium">{oauthErrorMsg}</p>
+              <button
+                onClick={() => setAuthError(null)}
+                className="text-xs text-amber-600 underline mt-1"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* OAuth providers */}
         <div className="space-y-3">
@@ -143,7 +168,7 @@ export default function LoginPage() {
           </form>
         )}
       </div>
-      
+
       {/* Selector de idioma bajo el formulario */}
       <div className="mt-8 flex justify-center bg-white shadow-sm p-2 rounded-full border border-gray-200">
         <LanguageSelector />

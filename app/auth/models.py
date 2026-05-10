@@ -1,5 +1,5 @@
 ﻿"""Pydantic models for authentication."""
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel
 
 
@@ -8,7 +8,7 @@ class UserOut(BaseModel):
     name: str
     provider: str
     is_active: bool
-    role: str = "user"
+    role: str = "pending"
 
 
 class TokenResponse(BaseModel):

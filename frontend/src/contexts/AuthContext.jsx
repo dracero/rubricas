@@ -26,6 +26,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState(null);
   const [showPostLoginLanding, setShowPostLoginLanding] = useState(() =>
     sessionStorage.getItem(POST_LOGIN_LANDING_KEY) === '1'
   );
@@ -35,18 +36,26 @@ export function AuthProvider({ children }) {
     patchFetch(() => localStorage.getItem(TOKEN_KEY));
   }, []);
 
-  // On mount: check for ?token=... in URL (post-OAuth redirect)
+  // On mount: check for ?token=... or ?auth_error=... in URL (post-OAuth redirect)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
+    const urlError = params.get('auth_error');
+
     if (urlToken) {
       localStorage.setItem(TOKEN_KEY, urlToken);
       sessionStorage.setItem(POST_LOGIN_LANDING_KEY, '1');
       setToken(urlToken);
       setShowPostLoginLanding(true);
-      // Clean URL
-      const clean = window.location.pathname;
-      window.history.replaceState({}, '', clean);
+    }
+
+    if (urlError) {
+      setAuthError(urlError);
+    }
+
+    // Clean URL regardless
+    if (urlToken || urlError) {
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
@@ -86,6 +95,8 @@ export function AuthProvider({ children }) {
         user,
         token,
         loading,
+        authError,
+        setAuthError,
         logout,
         loginWithToken,
         showPostLoginLanding,

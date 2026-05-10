@@ -1912,7 +1912,7 @@ from app.auth.db import (
 from passlib.context import CryptContext
 _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-VALID_ROLES = {"admin", "verificador", "rubricador"}
+VALID_ROLES = {"admin", "verificador", "rubricador", "pending"}
 
 
 @app.get("/api/users")
@@ -1961,6 +1961,9 @@ async def update_user_endpoint(email: str, body: UpdateUserRequest, current_user
         updates["name"] = body.name
     if body.role is not None:
         updates["role"] = body.role
+        # Si el admin asigna un rol real a un usuario pendiente, lo activa automáticamente
+        if body.role != "pending" and body.is_active is None:
+            updates["is_active"] = True
     if body.is_active is not None:
         updates["is_active"] = body.is_active
     if body.password:

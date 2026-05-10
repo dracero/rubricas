@@ -64,8 +64,8 @@ async def upsert_oauth_user(email: str, name: str, provider: str) -> Dict[str, A
             "$setOnInsert": {
                 "email": email,
                 "hashed_password": None,
-                "is_active": True,
-                "role": "rubricador",
+                "is_active": False,   # inactive until admin approves
+                "role": "pending",    # no permissions until admin assigns a role
             },
         },
         upsert=True,

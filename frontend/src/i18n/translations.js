@@ -31,7 +31,10 @@ export const translations = {
     'feature_3_desc': 'Extendé el comportamiento del sistema según tu flujo.',
     'continue_dashboard': 'Continuar al panel',
 
-    // Language names
+    // Auth errors
+    'error.pending_approval': 'Tu cuenta está pendiente de aprobación. Un administrador debe asignarte un rol antes de que puedas ingresar.',
+    'error.account_disabled': 'Tu cuenta está desactivada. Contactá al administrador.',
+
     'lang_es': 'Español',
     'lang_gl': 'Gallego',
     'lang_pt': 'Portugués (BR)',
@@ -204,6 +207,10 @@ export const translations = {
     'feature_3_title': 'Skills personalizadas',
     'feature_3_desc': 'Estende o comportamento do sistema segundo o teu fluxo.',
     'continue_dashboard': 'Continuar ao panel',
+
+    // Auth errors
+    'error.pending_approval': 'A túa conta está pendente de aprobación. Un administrador debe asignarte un rol antes de que poidas entrar.',
+    'error.account_disabled': 'A túa conta está desactivada. Contacta co administrador.',
 
     // Language names
     'lang_es': 'Español',
@@ -379,6 +386,10 @@ export const translations = {
     'feature_3_desc': 'Extend the system behavior according to your flow.',
     'continue_dashboard': 'Continue to dashboard',
 
+    // Auth errors
+    'error.pending_approval': 'Your account is pending approval. An administrator must assign you a role before you can log in.',
+    'error.account_disabled': 'Your account has been disabled. Please contact the administrator.',
+
     // Language names
     'lang_es': 'Spanish',
     'lang_gl': 'Galician',
@@ -552,6 +563,10 @@ export const translations = {
     'feature_3_title': 'Skills personalizadas',
     'feature_3_desc': 'Estenda o comportamento do sistema de acordo com seu fluxo.',
     'continue_dashboard': 'Continuar para o painel',
+
+    // Auth errors
+    'error.pending_approval': 'Sua conta está pendente de aprovação. Um administrador deve atribuir um papel a você antes de poder entrar.',
+    'error.account_disabled': 'Sua conta está desativada. Entre em contato com o administrador.',
 
     // Language names
     'lang_es': 'Espanhol',
