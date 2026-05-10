@@ -1,11 +1,35 @@
 import React from 'react';
-import { Sparkles, ArrowRight, ShieldCheck, FileText, LogOut, Settings } from 'lucide-react';
+import { Sparkles, ArrowRight, ShieldCheck, FileText, Settings, BookOpen, PenLine } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useAuth } from '../contexts/AuthContext';
-import LanguageSelector from '../components/LanguageSelector';
 
 export default function PostLoginLanding({ user, onContinue, onConfig }) {
   const { t } = useLanguage();
+  const role = user?.role;
+
+  // Define features per role
+  // rubricador: generate + repository + writing assistant
+  // verificador: all of the above + evaluation
+  // admin: everything
+  const features = [
+    {
+      icon: <FileText className="w-5 h-5 text-blue-600" />,
+      title: t('feature_1_title'),
+      desc: t('feature_1_desc'),
+      roles: ['admin', 'verificador', 'rubricador'],
+    },
+    {
+      icon: <ShieldCheck className="w-5 h-5 text-emerald-600" />,
+      title: t('feature_2_title'),
+      desc: t('feature_2_desc'),
+      roles: ['admin', 'verificador'],
+    },
+    {
+      icon: <Sparkles className="w-5 h-5 text-violet-600" />,
+      title: t('feature_3_title'),
+      desc: t('feature_3_desc'),
+      roles: ['admin', 'verificador', 'rubricador'],
+    },
+  ].filter(f => f.roles.includes(role));
 
   return (
     <div className="flex flex-col h-full items-center justify-center p-8 md:p-10 fade-in-up">
@@ -22,26 +46,20 @@ export default function PostLoginLanding({ user, onContinue, onConfig }) {
           {t('logged_in_as')} <span className="font-semibold">{user?.email}</span>. {t('landing_desc')}
         </p>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-            <FileText className="w-5 h-5 text-blue-600" />
-            <p className="mt-2 text-sm font-semibold text-slate-800">{t('feature_1_title')}</p>
-            <p className="mt-1 text-xs text-slate-600">{t('feature_1_desc')}</p>
+        {features.length > 0 && (
+          <div className={`mt-6 grid grid-cols-1 gap-3 ${features.length > 1 ? 'md:grid-cols-' + features.length : ''}`}>
+            {features.map((f, i) => (
+              <div key={i} className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                {f.icon}
+                <p className="mt-2 text-sm font-semibold text-slate-800">{f.title}</p>
+                <p className="mt-1 text-xs text-slate-600">{f.desc}</p>
+              </div>
+            ))}
           </div>
-          <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-            <ShieldCheck className="w-5 h-5 text-emerald-600" />
-            <p className="mt-2 text-sm font-semibold text-slate-800">{t('feature_2_title')}</p>
-            <p className="mt-1 text-xs text-slate-600">{t('feature_2_desc')}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-            <Sparkles className="w-5 h-5 text-violet-600" />
-            <p className="mt-2 text-sm font-semibold text-slate-800">{t('feature_3_title')}</p>
-            <p className="mt-1 text-xs text-slate-600">{t('feature_3_desc')}</p>
-          </div>
-        </div>
+        )}
 
         <div className="mt-8 flex justify-between items-center">
-          {user?.role === 'admin' ? (
+          {role === 'admin' ? (
             <button
               type="button"
               onClick={onConfig}
@@ -51,7 +69,7 @@ export default function PostLoginLanding({ user, onContinue, onConfig }) {
               <span>Configuración</span>
             </button>
           ) : (
-            <div></div> /* Espaciador si no es admin */
+            <div />
           )}
 
           <button

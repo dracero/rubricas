@@ -13,6 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 const ChatInterface = () => {
     const { lang, t } = useLanguage();
     const { user } = useAuth();
+    const role = user?.role;
     const [messages, setMessages] = useState([
         {
             source: 'orchestrator',
@@ -25,19 +26,20 @@ const ChatInterface = () => {
     const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef(null);
 
-    // Permission check: rubricador can only use generator, verificador and admin can use all
+    // Permission check per role:
+    // rubricador  → generator, repository, writing assistant (NO evaluator)
+    // verificador → evaluator, repository, writing assistant (NO generator)
+    // admin       → everything
     const canUseComponent = (componentType) => {
         if (!user) return false;
-        const role = user.role;
-        
-        // Admin and verificador can use everything
-        if (role === 'admin' || role === 'verificador') return true;
-        
-        // Rubricador can only use generator, repository, and writing assistant
-        if (role === 'rubricador') {
+        const r = user.role;
+        if (r === 'admin') return true;
+        if (r === 'verificador') {
+            return ['RubricEvaluator', 'RubricRepository', 'WritingAssistant'].includes(componentType);
+        }
+        if (r === 'rubricador') {
             return ['RubricGenerator', 'RubricRepository', 'WritingAssistant'].includes(componentType);
         }
-        
         return false;
     };
 
