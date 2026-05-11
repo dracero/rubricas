@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "concurrently -k -n back,front -c blue,green \"npm run dev:back\" \"npm run dev:front\"",
     "dev:back": "uv run python -m app.server",
-    "dev:front": "wait-on http-get://localhost:8000/ && cd frontend && npm run dev",
+    "dev:front": "wait-on http-get://localhost:8080/ && cd frontend && npm run dev",
     "install:all": "npm install && cd frontend && npm install"
   },
   "devDependencies": {
